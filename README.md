@@ -32,7 +32,43 @@
 
 ## 使用方式
 
-待補。完成後會在此提供一鍵租機與市場掃描的指令範例。
+```bash
+# 一鍵租機（自動掃描、篩選、租下、等模型下載完、回報連線資訊）
+python3 scripts/rent_gpu.py
+
+# 常用選項
+python3 scripts/rent_gpu.py --gpu RTX_3090,RTX_4090   # 指定 GPU 型號
+python3 scripts/rent_gpu.py --min-vram 12000          # 最低 VRAM (MiB)
+python3 scripts/rent_gpu.py --dry-run                 # 只掃描不租
+
+# 用完刪除實例（停止計費）
+python3 scripts/rent_gpu.py --destroy <實例ID>
+```
+
+租機時會自動設定 vast.ai 模板環境變數，關閉對外登入驗證
+（`WEB_ENABLE_AUTH=false`、`ENABLE_AUTH=false`，兩套 image 家族都涵蓋），
+並透過 `PROVISIONING_SCRIPT` 在開機時自動下載模型。
+外部工具（如 SillyTavern）直接連回報的 tunnel URL 即可。
+
+## 佈建內容（provisioning.sh）
+
+開機自動下載 Qwen-Image-2.1 Turbo 的 int8 模型組（來源為
+[Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1)，約 17.3 GB）：
+
+| 類別 | 檔案 | 大小 |
+| --- | --- | --- |
+| 主模型 | `qwen_image_2.1_turbo_int8_convrot.safetensors` | 7.26 GB |
+| 文字編碼器 | `qwen3vl_8b_int8_convrot.safetensors` | 9.35 GB |
+| VAE | `qwen_image_2.1_vae_bf16.safetensors` | 0.68 GB |
+
+並將 ComfyUI 更新至 ≥ v0.37.0（Qwen-Image-2.1 節點所需的最低版本）。
+
+**Turbo 生圖參數**：steps=8、cfg=1、sampler=euler、scheduler=simple。
+
+## 注意：CLI 分頁上限
+
+`vastai search offers` 預設只回傳前 64 筆（會漏掉大部分市場），
+本腳本已加 `--limit 2000` 抓全量；自行使用 CLI 時記得加這個參數。
 
 ## 授權
 
