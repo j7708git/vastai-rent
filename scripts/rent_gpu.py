@@ -147,7 +147,11 @@ def build_env_args():
         # 模板 portal 對外埠 8188 -> 內部 18188，排除在驗證之外（SillyTavern 直連）
         ("AUTH_EXCLUDE", "8188"),
         ("COMFYUI_ARGS",
-         f"'--disable-auto-launch --port {COMFY_PORT} --enable-cors-header'"),
+         # --use-pytorch-cross-attention：Blackwell（算力 12.0）等新卡上，映像內建
+         # 的 xformers kernel 不支援（memory_efficient_attention_forward 噴
+         # "capability too new"），強制改用 PyTorch 內建 attention。舊卡也可用。
+         f"'--disable-auto-launch --port {COMFY_PORT} --enable-cors-header "
+         f"--use-pytorch-cross-attention'"),
         ("PROVISIONING_SCRIPT", PROVISIONING_URL),
     ]
     return " ".join(f"-e {k}={v}" for k, v in pairs)
