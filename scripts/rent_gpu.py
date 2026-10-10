@@ -28,9 +28,10 @@ import sys
 import time
 from pathlib import Path
 
-# 官方互動式 ComfyUI 模板（readme 頁 cloud.vast.ai/template/readme/8aef8f4b...
-# 的 URL 即含此 hash；查詢日期 2026-10-10）。可用 --template 覆寫。
-DEFAULT_TEMPLATE_HASH = "8aef8f4bf23717087e3f744f7de30643"
+# 官方 vastai/comfy 互動式模板（2026-09-24 版，用 `vastai search templates` 查得；
+# 內建 portal + Cloudflare tunnel，PROVISIONING_SCRIPT/COMFYUI_ARGS 可用環境變數覆寫）。
+# 可用 --template 覆寫。
+DEFAULT_TEMPLATE_HASH = "9e4091bea3fc83cd55070f37cc1b5bed"
 # 佈建腳本（本 repo 的 provisioning.sh，需已 push 到 GitHub 才會生效）
 PROVISIONING_URL = ("https://raw.githubusercontent.com/j7708git/vastai-rent/"
                     "main/provisioning.sh")
@@ -133,17 +134,23 @@ def filter_offers(offers, max_cost, min_down, min_vram, gpu_names=None,
     return hits
 
 
-def build_env_args(disk_unused=None):
-    """組出 --env 參數：關閉對外驗證 + 指定佈建腳本"""
+def build_env_args():
+    """組出 --env 參數：關閉對外驗證 + 指定佈建腳本。
+
+    vast.ai 的 --env 格式：`-e KEY=value`（環境變數）、`-p 宿主:容器`（埠對應）。
+    值內含空白需用單引號包住（vastai 端會做 shell 式切分）。
+    """
     pairs = [
         ("WEB_ENABLE_AUTH", "false"),      # ai-dock 系
         ("ENABLE_AUTH", "false"),          # vastai/base-image 系
         ("WEB_ENABLE_HTTPS", "false"),
+        # 模板 portal 對外埠 8188 -> 內部 18188，排除在驗證之外（SillyTavern 直連）
+        ("AUTH_EXCLUDE", "8188"),
         ("COMFYUI_ARGS",
-         f"--disable-auto-launch --port {COMFY_PORT} --enable-cors-header"),
+         f"'--disable-auto-launch --port {COMFY_PORT} --enable-cors-header'"),
         ("PROVISIONING_SCRIPT", PROVISIONING_URL),
     ]
-    return " ".join(f"-p {k}='{v}'" for k, v in pairs)
+    return " ".join(f"-e {k}={v}" for k, v in pairs)
 
 
 def create_instance(offer_id, disk, template_hash):
@@ -158,7 +165,11 @@ def create_instance(offer_id, disk, template_hash):
          "--env", env_args,
          "--disk", str(disk)], timeout=120)
     if rc != 0:
-        LOG(f"❌ 建立失敗: {err}")
+        LOG(f"❌ 建立失敗 (rc={rc}): {err.strip()[:300]}")
+        return None
+    if not out.strip():
+        # rc=0 但沒有回應：多半是伺服端拒絕（訊息在 stderr），列出來判讀
+        LOG(f"❌ 建立無回應，stderr: {err.strip()[:300]!r}")
         return None
     LOG(f"  原始回應: {out.strip()[:200]}")
     m = re.search(r"new_contract['\"]?\s*[:=]\s*['\"]?(\d+)", out)
