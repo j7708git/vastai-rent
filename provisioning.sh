@@ -34,16 +34,17 @@ MODELS="$COMFY_DIR/models"
 mkdir -p "$MODELS/diffusion_models" "$MODELS/text_encoders" "$MODELS/vae"
 
 # ------------------------------------------------------------------ downloads
-# wget -c 支援斷點續傳；下載中會有 .part 之類暫存，完成後檔案大小才正確。
+# wget -c 支援斷點續傳。dest 為 "$MODELS/<類別>"（絕對路徑），不要用相對路徑。
 download() {
-  local dest_dir="$1"
+  local category="$1"
   local filename="$2"
-  local url="$HF_BASE/$1/$filename"
+  local dest_dir="$MODELS/$category"
+  local url="$HF_BASE/$category/$filename"
   if [ -s "$dest_dir/$filename" ]; then
     log "already present, skip: $filename"
     return 0
   fi
-  log "downloading $filename"
+  log "downloading $filename -> $dest_dir"
   wget -c -q --show-progress -P "$dest_dir" "$url"
   local rc=$?
   if [ $rc -ne 0 ]; then
@@ -60,14 +61,21 @@ download vae              qwen_image_2.1_vae_bf16.safetensors              || FA
 
 # ------------------------------------------------------- update ComfyUI code
 # Qwen-Image-2.1 節點（TextEncodeQwenImage21 / QwenImage21Cache）需要
-# ComfyUI >= v0.37.0（2026-09-21）。模板內建版本可能較舊，這裡拉到最新。
+# ComfyUI >= v0.37.0（2026-09-21）。映像內建可能為 v0.30.0（舊 commit 不在上游
+# 歷史線上，git pull --ff-only 會失敗），這裡先 ff-only 再 hard reset 對齊。
 cd "$COMFY_DIR" || exit 1
 if [ -d .git ]; then
   log "updating ComfyUI (need >= v0.37.0 for Qwen-Image-2.1 nodes)"
-  if git pull --ff-only 2>/dev/null; then
-    log "ComfyUI updated: $(git rev-parse --short HEAD 2>/dev/null)"
+  if git pull --ff-only >/dev/null 2>&1; then
+    log "ComfyUI updated (pull): $(git rev-parse --short HEAD 2>/dev/null)"
   else
-    log "warning: git pull failed (local changes?), keeping current version"
+    # 映像 commit 不在 origin/master 歷史上時，ff-only 必失敗；
+    # 佈建機器是全新容器，hard reset 對齊上游是安全作法
+    if git fetch origin master >/dev/null 2>&1 && git reset --hard origin/master >/dev/null 2>&1; then
+      log "ComfyUI updated (reset): $(git rev-parse --short HEAD 2>/dev/null)"
+    else
+      log "warning: cannot update ComfyUI (fetch/reset failed), keeping current version"
+    fi
   fi
   # 更新後重裝依賴（節點可能需要新套件）
   if [ -f requirements.txt ]; then
