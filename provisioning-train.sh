@@ -58,6 +58,7 @@ log "dataset   : $DATASET_DIR"
 # 官方 vastai/pytorch 映像「沒有」內建 Node（2026-10-11 實測）。
 # 策略：先找系統／NVM 的 npm，找不到就從 nodejs.org 抓 LTS tarball 自裝。
 ensure_npm() {
+  [ -x /opt/node/bin/npm ] && { export PATH="/opt/node/bin:$PATH"; return 0; }
   command -v npm >/dev/null 2>&1 && return 0
   local d
   for d in "${NVM_DIR:-}" /root/.nvm /usr/local/nvm "$HOME/.nvm"; do
@@ -296,14 +297,8 @@ if [ -d /opt/supervisor-scripts ]; then
   log "註冊 Supervisor 服務 ai-toolkit-ui"
   cat > "$UI_WRAPPER" <<WRAP
 #!/bin/bash
-utils=/opt/supervisor-scripts/utils
-[ -f "\${utils}/logging.sh" ] && . "\${utils}/logging.sh"
-[ -f "\${utils}/environment.sh" ] && . "\${utils}/environment.sh"
-if [ -n "$NVM_DIR_FOUND" ] && [ -s "$NVM_DIR_FOUND/nvm.sh" ]; then
-  export NVM_DIR="$NVM_DIR_FOUND"
-  . "$NVM_DIR_FOUND/nvm.sh"
-  nvm use --lts >/dev/null 2>&1 || nvm use node >/dev/null 2>&1 || true
-fi
+# supervisor 環境沒有佈建 shell 的 PATH；Node 裝在 /opt/node（tarball），必須明確帶入
+export PATH="/opt/node/bin:\$PATH"
 export HF_HOME="$HF_ROOT"
 export HF_HUB_CACHE="$HF_ROOT/hub"
 cd "$UI_DIR" || exit 1
