@@ -11,6 +11,8 @@
 #   diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors  (7.26 GB)
 #   text_encoders/qwen3vl_8b_int8_convrot.safetensors               (9.35 GB)
 #   vae/qwen_image_2.1_vae_bf16.safetensors                         (0.68 GB)
+# 另加自訂 LoRA：HF_LORA_REPO 的 loras/qwen2.1/NSFW Qwen by TheseAlpacas V2.safetensors
+#   -> models/loras/qwen 2.1/（LoRA 失敗僅警告，不擋佈建）
 #
 # 查詢日期 2026-10-10；檔名以 HF API 核對過。
 # HF 下載改版 2026-10-11：已在 vastai/comfy 映像實測（0.68GB ≈ 2 Gb/s、etag 續傳/跳過）。
@@ -42,6 +44,8 @@ mkdir -p "$MODELS/diffusion_models" "$MODELS/text_encoders" "$MODELS/vae"
 # 映像沒有時自動補裝；裝不起來才退回 wget -c。
 # HF_TOKEN／HF_HOME 由 vast.ai 模板環境變數帶入容器，hub 會自動讀取（本 repo 公開，免 token 也能抓）。
 HF_REPO_ID="Comfy-Org/Qwen-Image-2.1"
+# 自訂人物 LoRA（私有 repo；容器內的 HF_TOKEN 由 vast.ai 模板環境變數帶入）
+HF_LORA_REPO="dennygod/comfyui-models"
 
 # wget -c 支援斷點續傳。dest 為 "$MODELS/<類別>"（絕對路徑），不要用相對路徑。
 download_wget() {
@@ -80,34 +84,60 @@ if ensure_hf_py; then
   # Xet 高效能傳輸（hub 2.x 起取代 hf_transfer）；無 hf_xet 時僅是多餘變數，無害
   export HF_XET_HIGH_PERFORMANCE=1
   log "downloading via huggingface_hub (Xet high-performance)..."
-  python3 - "$MODELS" "$HF_REPO_ID" <<'PY' || FAILED=1
+  python3 - "$MODELS" "$HF_REPO_ID" "$HF_LORA_REPO" <<'PY' || FAILED=1
 import os
+import shutil
 import sys
+import tempfile
 
 from huggingface_hub import hf_hub_download
 
-models_dir, repo_id = sys.argv[1], sys.argv[2]
-files = [
-    ("diffusion_models", "qwen_image_2.1_turbo_int8_convrot.safetensors"),
-    ("text_encoders", "qwen3vl_8b_int8_convrot.safetensors"),
-    ("vae", "qwen_image_2.1_vae_bf16.safetensors"),
+models_dir, qwen_repo, lora_repo = sys.argv[1], sys.argv[2], sys.argv[3]
+# (repo_id, HF 內路徑, models 下相對目的路徑)
+# 目的路徑含空白是有意的：ComfyUI 選單會顯示成 qwen 2.1/<檔名>
+entries = [
+    (qwen_repo, "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+     "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors"),
+    (qwen_repo, "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+     "text_encoders/qwen3vl_8b_int8_convrot.safetensors"),
+    (qwen_repo, "vae/qwen_image_2.1_vae_bf16.safetensors",
+     "vae/qwen_image_2.1_vae_bf16.safetensors"),
+    # 自訂人物 LoRA（私有 repo，需容器內有可用的 HF_TOKEN）
+    (lora_repo, "loras/qwen2.1/NSFW Qwen by TheseAlpacas V2.safetensors",
+     "loras/qwen 2.1/NSFW Qwen by TheseAlpacas V2.safetensors"),
 ]
 
 failed = False
-for category, filename in files:
-    dest = os.path.join(models_dir, category, filename)
+for repo_id, hf_path, dest_rel in entries:
+    dest = os.path.join(models_dir, dest_rel)
     if os.path.isfile(dest) and os.path.getsize(dest) > 0:
-        print(f"[provision] already present, skip: {filename}")
+        print(f"[provision] already present, skip: {dest_rel}")
         continue
-    print(f"[provision] downloading (hf): {category}/{filename}", flush=True)
+    print(f"[provision] downloading (hf): {hf_path}", flush=True)
     try:
-        hf_hub_download(repo_id=repo_id, filename=f"{category}/{filename}",
-                        local_dir=models_dir)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if hf_path == dest_rel:
+            # 目的與 HF 路徑相同：直接落到 models 目錄（享受 local_dir 續傳）
+            hf_hub_download(repo_id=repo_id, filename=hf_path, local_dir=models_dir)
+        else:
+            # 目的不同（如 LoRA）：先抓到暫存目錄再搬到定位
+            tmp_dir = tempfile.mkdtemp(dir=models_dir, prefix=".hf-dl-")
+            try:
+                got = hf_hub_download(repo_id=repo_id, filename=hf_path,
+                                      local_dir=tmp_dir)
+                shutil.move(got, dest)
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
         print(f"[provision] downloaded: {dest}", flush=True)
     except Exception as exc:  # noqa: BLE001 - 佈建腳本要的是明確錯誤訊息
-        print(f"[provision] error: hf download failed {category}/{filename}: {exc}",
-              flush=True)
-        failed = True
+        # 主模型三檔失敗要讓佈建整體失敗；LoRA 屬加購品，失敗只警告不擋開機
+        if hf_path.startswith("loras/"):
+            print(f"[provision] warning: LoRA 下載失敗（不擋佈建）{dest_rel}: {exc}",
+                  flush=True)
+        else:
+            print(f"[provision] error: hf download failed {hf_path}: {exc}",
+                  flush=True)
+            failed = True
 
 sys.exit(1 if failed else 0)
 PY

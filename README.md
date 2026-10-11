@@ -64,6 +64,10 @@ python3 scripts/rent_gpu.py --destroy <實例ID>
 | 文字編碼器 | `qwen3vl_8b_int8_convrot.safetensors` | 9.35 GB |
 | VAE | `qwen_image_2.1_vae_bf16.safetensors` | 0.68 GB |
 
+另會自動下載自訂人物 LoRA（私有 repo `dennygod/comfyui-models` 的
+`loras/qwen2.1/NSFW Qwen by TheseAlpacas V2.safetensors`，約 80MB）到
+`models/loras/qwen 2.1/`；需容器內有可用的 `HF_TOKEN`，失敗僅警告、不擋佈建。
+
 並將 ComfyUI 更新至 ≥ v0.37.0（Qwen-Image-2.1 節點所需的最低版本）。
 
 **下載方式**：模型一律走 `huggingface_hub`（Xet 高速傳輸、斷點續傳、下載後自動
