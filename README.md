@@ -65,6 +65,23 @@ python3 scripts/rent_gpu.py --destroy <實例ID>
 
 **Turbo 生圖參數**：steps=8、cfg=1、sampler=euler、scheduler=simple。
 
+## 訓練模式（Qwen-Image-2.1 人物 LoRA）
+
+除了推論，也能一鍵租一台裝好 [ai-toolkit](https://github.com/ostris/ai-toolkit)、
+下載好 Qwen-Image-2.1 base（int8）訓練模型、訓練 GUI 可連的機器：
+
+```bash
+python3 scripts/rent_gpu.py --mode train            # 租訓練機
+python3 scripts/rent_gpu.py --mode train --dry-run  # 只掃描
+```
+
+訓練模式改用 PyTorch (Vast) 模板、磁碟下限 80GB、VRAM 預設 ≥16GB 的消費級 RTX，
+佈建腳本換成 `provisioning-train.sh`（裝 ai-toolkit、下載 base int8 三檔與官方設定檔、
+生成起手 YAML、建立 `/workspace/dataset/`、啟動訓練 UI）。
+
+完整用法、資料集格式、上傳方式、起手 YAML 欄位與訓完的 LoRA 如何放回 ComfyUI，
+見 **[docs/qwen21-lora-training.md](docs/qwen21-lora-training.md)**。
+
 ## 注意：CLI 分頁上限
 
 `vastai search offers` 預設只回傳前 64 筆（會漏掉大部分市場），

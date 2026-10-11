@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
-vast.ai 一鍵租機腳本（Qwen-Image-2.1 Turbo 版）
-流程: 掃市場 → 依條件篩選 → 用官方 ComfyUI 模板租下（關閉對外驗證）→
-      等開機 → 等模型下載完 + ComfyUI 就緒（含 Qwen-Image-2.1 節點檢查）→
-      抓 tunnel URL → 回報
+vast.ai 一鍵租機腳本（Qwen-Image-2.1）
+
+兩種工作負載，用 `--mode` 切換（預設 inference，行為不變）：
+  * inference：租 ComfyUI 機跑 Qwen-Image-2.1-Turbo 推論（現有流程）。
+  * train    ：租 PyTorch 機裝 ai-toolkit，訓練 Qwen-Image-2.1 人物 LoRA。
+
+流程: 掃市場 → 依條件篩選 → 用對應模板租下（關閉對外驗證）→ 等開機 →
+      等佈建完成（inference：模型檔＋ComfyUI 節點；train：ai-toolkit＋模型檔＋
+      訓練 UI 埠）→ 抓對外 URL → 回報
 
 用法:
-  python3 scripts/rent_gpu.py                     # 自動租最便宜且符合條件的機器
-  python3 scripts/rent_gpu.py --gpu RTX_3090      # 指定 GPU 型號
-  python3 scripts/rent_gpu.py --min-vram 24000    # 最低 VRAM (MiB)
-  python3 scripts/rent_gpu.py --dry-run           # 只掃描不租
-  python3 scripts/rent_gpu.py --destroy 49693360  # 刪除實例(停止計費)
+  python3 scripts/rent_gpu.py                          # 推理模式，租最便宜且符合條件的機器
+  python3 scripts/rent_gpu.py --mode train             # 訓練模式（16G+ 消費級卡、磁碟 80G）
+  python3 scripts/rent_gpu.py --gpu RTX_3090           # 指定 GPU 型號
+  python3 scripts/rent_gpu.py --min-vram 24000         # 最低 VRAM (MiB)
+  python3 scripts/rent_gpu.py --dry-run                # 只掃描不租
+  python3 scripts/rent_gpu.py --destroy 49693360       # 刪除實例(停止計費)
 
-外部連線（SillyTavern 直連）:
+外部連線（SillyTavern 直連 / 訓練 GUI）:
   建立實例時會設定環境變數關閉模板的登入驗證：
     WEB_ENABLE_AUTH=false  ENABLE_AUTH=false  WEB_ENABLE_HTTPS=false
   （兩套命名都設，涵蓋 ai-dock 與 vastai/base-image 兩種 image 家族）
@@ -28,6 +34,10 @@ import sys
 import time
 from pathlib import Path
 
+MODE_INFERENCE = "inference"
+MODE_TRAIN = "train"
+
+# ---- 推理模式（--mode inference，預設；行為不變）----
 # 官方 vastai/comfy 互動式模板（2026-09-24 版，用 `vastai search templates` 查得；
 # 內建 portal + Cloudflare tunnel，PROVISIONING_SCRIPT/COMFYUI_ARGS 可用環境變數覆寫）。
 # 可用 --template 覆寫。
@@ -40,6 +50,32 @@ COMFY_PORT = 18188
 # Qwen-Image-2.1 支援自 ComfyUI v0.37.0，/object_info 應該要能看到這個節點
 QWEN21_NODE = "TextEncodeQwenImage21"
 DEFAULT_DISK = 60  # GB；模型 17.3GB + ComfyUI 環境，開機後不可再調整
+DEFAULT_MIN_VRAM = 12000  # MiB；Qwen-2.1-Turbo 12G 實測可跑
+
+# ---- 訓練模式（--mode train）----
+# 官方 PyTorch (Vast) 模板（2026-01-23 版，`vastai search templates` 查得；
+# 映像 vastai/pytorch，屬 vastai/base-image 家族，支援 PROVISIONING_SCRIPT 與
+# Instance Portal 的 Cloudflare tunnel）。可用 --template 覆寫。
+TRAIN_TEMPLATE_HASH = "b84ca276fa572e949cd7ff43ae5fe855"
+# 訓練版佈建腳本（本 repo 的 provisioning-train.sh，需已 push 才會生效）
+TRAIN_PROVISIONING_URL = ("https://raw.githubusercontent.com/j7708git/vastai-rent/"
+                          "main/provisioning-train.sh")
+# ai-toolkit 訓練 UI 埠（官方預設）；訓練腳本在此路徑裝機
+AI_TOOLKIT_PORT = 8675
+TRAIN_DISK = 80       # GB；模型 ~17.3GB + latent/TE cache + optimizer state，開機後不可調
+TRAIN_MIN_VRAM = 16000  # MiB；使用者指定 16G+ 消費級卡（4080/4080S/5070Ti/5080）
+# 訓練機上的固定路徑（與 provisioning-train.sh 一致，勿任意改）
+TRAIN_AI_TOOLKIT_DIR = "/workspace/ai-toolkit"
+TRAIN_HF_ROOT = "/workspace/hf"
+TRAIN_DATASET_DIR = "/workspace/dataset"
+# Instance Portal 連結（PyTorch (Vast) 模板預設 + AI Toolkit UI）。
+# 格式 hostname:external_port:internal_port:path:name；external 由 -p 開放。
+TRAIN_PORTAL_CONFIG = ("localhost:1111:11111:/:Instance Portal|"
+                       "localhost:8080:18080:/:Jupyter|"
+                       "localhost:8080:8080:/terminals/1:Jupyter Terminal|"
+                       "localhost:8384:18384:/:Syncthing|"
+                       "localhost:6006:16006:/:Tensorboard|"
+                       f"localhost:{AI_TOOLKIT_PORT}:{AI_TOOLKIT_PORT}:/:AI Toolkit")
 
 LOG = print
 
@@ -134,12 +170,32 @@ def filter_offers(offers, max_cost, min_down, min_vram, gpu_names=None,
     return hits
 
 
-def build_env_args():
+def build_env_args(mode=MODE_INFERENCE):
     """組出 --env 參數：關閉對外驗證 + 指定佈建腳本。
 
     vast.ai 的 --env 格式：`-e KEY=value`（環境變數）、`-p 宿主:容器`（埠對應）。
     值內含空白需用單引號包住（vastai 端會做 shell 式切分）。
+
+    inference：套用現有 ComfyUI 模板的參數（行為不變）。
+    train：改用 PyTorch (Vast) 模板；除了關閉驗證，另開放 8675 並把 AI Toolkit UI
+           加入 Instance Portal，讓 portal 產生對外 tunnel 連結。
     """
+    if mode == MODE_TRAIN:
+        pairs = [
+            ("WEB_ENABLE_AUTH", "false"),      # ai-dock 系
+            ("ENABLE_AUTH", "false"),          # vastai/base-image 系
+            ("WEB_ENABLE_HTTPS", "false"),
+            ("ENABLE_HTTPS", "false"),
+            # AI Toolkit UI 埠排除在驗證之外（關閉登入）
+            ("AUTH_EXCLUDE", str(AI_TOOLKIT_PORT)),
+            ("PORTAL_CONFIG", "'" + TRAIN_PORTAL_CONFIG + "'"),
+            ("PROVISIONING_SCRIPT", TRAIN_PROVISIONING_URL),
+        ]
+        # 開放 AI Toolkit UI 對外埠（portal 需要 external port 已被 -p 開放）
+        parts = [f"-p {AI_TOOLKIT_PORT}:{AI_TOOLKIT_PORT}"]
+        parts += [f"-e {k}={v}" for k, v in pairs]
+        return " ".join(parts)
+
     pairs = [
         ("WEB_ENABLE_AUTH", "false"),      # ai-dock 系
         ("ENABLE_AUTH", "false"),          # vastai/base-image 系
@@ -157,12 +213,17 @@ def build_env_args():
     return " ".join(f"-e {k}={v}" for k, v in pairs)
 
 
-def create_instance(offer_id, disk, template_hash):
-    """用官方 ComfyUI 模板建立實例（含關驗證環境變數與佈建腳本）"""
-    env_args = build_env_args()
+def create_instance(offer_id, disk, template_hash, mode=MODE_INFERENCE):
+    """用對應模板建立實例（含關驗證環境變數與佈建腳本）"""
+    env_args = build_env_args(mode)
     LOG(f"🚀 建立實例: offer={offer_id} disk={disk}GB template={template_hash[:8]}...")
-    LOG("   環境變數: WEB_ENABLE_AUTH=false ENABLE_AUTH=false "
-        f"COMFYUI_ARGS=... --port {COMFY_PORT} PROVISIONING_SCRIPT=<本 repo>")
+    if mode == MODE_TRAIN:
+        LOG("   環境變數: WEB_ENABLE_AUTH=false ENABLE_AUTH=false ENABLE_HTTPS=false "
+            f"AUTH_EXCLUDE={AI_TOOLKIT_PORT} PROVISIONING_SCRIPT=<本 repo>")
+        LOG(f"   對外埠: -p {AI_TOOLKIT_PORT}:{AI_TOOLKIT_PORT}（AI Toolkit UI）")
+    else:
+        LOG("   環境變數: WEB_ENABLE_AUTH=false ENABLE_AUTH=false "
+            f"COMFYUI_ARGS=... --port {COMFY_PORT} PROVISIONING_SCRIPT=<本 repo>")
     rc, out, err = run_vastai(
         ["create", "instance", str(offer_id),
          "--template_hash", template_hash,
@@ -374,6 +435,177 @@ def wait_models_ready(instance_id, info, timeout=1800):
     return ssh_cmd, tunnel_url
 
 
+def make_user_ssh(ssh_host, ssh_port):
+    """給使用者看的乾淨 SSH 指令（不含 BatchMode），可搭配 -L 做埠轉發"""
+    return (f"ssh -o StrictHostKeyChecking=no -i {SSH_KEY} "
+            f"-p {ssh_port} root@{ssh_host}")
+
+
+def wait_train_ready(instance_id, info, timeout=3600):
+    """SSH 進去等訓練機佈建完成，回傳 (ssh_cmd, ui_url, ssh_host, ssh_port)
+
+    就緒判據（不單靠 marker，「marker 不可靠」的教訓）：
+    - ai-toolkit：venv 與 run.py 存在（安裝完成）
+    - 模型：HF cache 內三個 base int8 檔都在
+    - 訓練 UI：本機 127.0.0.1:8675 有 HTTP 回應
+    - 對外 URL：UI 就緒後，從 Instance Portal 的 tunnel log 找 trycloudflare URL
+      並探測（找不到時 ui_url=None，summary 會改用 SSH 埠轉發）
+    """
+    ssh_host = info.get("ssh_host") or info.get("public_ipaddr")
+    ssh_port = info.get("ssh_port")
+    if not ssh_host or not ssh_port:
+        rc, out, err = run_vastai(["ssh-url", str(instance_id)], timeout=30)
+        m = re.search(r"ssh://root@([^:]+):(\d+)", out or "")
+        if not m:
+            LOG(f"⚠️ 無法取得 SSH 資訊 (ssh-url 也失敗: {err.strip()})")
+            return None, None, None, None
+        ssh_host, ssh_port = m.group(1), int(m.group(2))
+
+    ssh_cmd = make_ssh_cmd(ssh_host, ssh_port)
+    user_ssh = make_user_ssh(ssh_host, ssh_port)
+
+    LOG("🔑 附加上本機 SSH key")
+    run_vastai(["attach", "ssh", str(instance_id), f"{SSH_KEY}.pub"], timeout=60)
+    time.sleep(3)
+
+    LOG("⏳ 等 ai-toolkit 安裝 + 模型下載 (~17.3GB) + 訓練 UI 就緒 (可達 60 分鐘)...")
+    start = time.time()
+    ssh_ok = False
+    toolkit_ok = False
+    model_ok = False
+    ui_ok = False
+    ui_url = None
+    ssh_fail_n = 0
+    ssh_fallback_done = False
+
+    models_cmd = (
+        'n=0; for f in qwen_image_2.1_int8_convrot.safetensors '
+        'qwen3vl_8b_int8_convrot.safetensors '
+        'qwen_image_2.1_vae_bf16.safetensors; do '
+        f'find {TRAIN_HF_ROOT} -name "$f" 2>/dev/null | head -1 | grep -q . '
+        '&& n=$((n+1)); done; echo $n')
+
+    while time.time() - start < timeout:
+        t = int(time.time() - start)
+        if not ssh_ok:
+            out, err = ssh_run(ssh_cmd, "echo ssh_ok")
+            if "ssh_ok" in out:
+                ssh_ok = True
+                LOG(f"  [{t}s] ✅ SSH 就緒")
+            else:
+                ssh_fail_n += 1
+                LOG(f"  [{t}s] SSH 未就緒: {err.strip()[:80]}")
+                if ssh_fail_n >= 3 and not ssh_fallback_done:
+                    ssh_fallback_done = True
+                    rc2, out2, _ = run_vastai(["ssh-url", str(instance_id)],
+                                              timeout=30)
+                    m2 = re.search(r"ssh://root@([^:]+):(\d+)", out2 or "")
+                    if m2 and (m2.group(1), int(m2.group(2))) != (ssh_host, ssh_port):
+                        ssh_host, ssh_port = m2.group(1), int(m2.group(2))
+                        ssh_cmd = make_ssh_cmd(ssh_host, ssh_port)
+                        user_ssh = make_user_ssh(ssh_host, ssh_port)
+                        LOG(f"  ⚠️ proxy 連不上，切換 ssh-url 直連: "
+                            f"root@{ssh_host}:{ssh_port}")
+
+        if ssh_ok and not toolkit_ok:
+            out, _ = ssh_run(
+                ssh_cmd,
+                f'test -d {TRAIN_AI_TOOLKIT_DIR}/venv '
+                f'&& test -f {TRAIN_AI_TOOLKIT_DIR}/run.py '
+                '&& echo toolkit_ok || echo toolkit_no')
+            if "toolkit_ok" in out:
+                toolkit_ok = True
+                LOG(f"  [{t}s] ✅ ai-toolkit 安裝完成")
+            else:
+                LOG(f"  [{t}s] 安裝 ai-toolkit 中...")
+
+        if ssh_ok and not model_ok:
+            sizes, _ = ssh_run(ssh_cmd, models_cmd)
+            try:
+                n_files = int(sizes.strip() or "0")
+            except ValueError:
+                n_files = 0
+            if n_files >= 3:
+                model_ok = True
+                LOG(f"  [{t}s] ✅ 訓練模型下載完成 ({n_files}/3 檔)")
+            else:
+                LOG(f"  [{t}s] 下載訓練模型中... 模型檔={n_files}/3")
+
+        if ssh_ok and not ui_ok:
+            code, _ = ssh_run(
+                ssh_cmd,
+                f'curl -s -o /dev/null -w "%{{http_code}}" --max-time 8 '
+                f'http://127.0.0.1:{AI_TOOLKIT_PORT}/ || true')
+            if code.strip() in ("200", "301", "302", "307", "308"):
+                ui_ok = True
+                LOG(f"  [{t}s] ✅ AI Toolkit UI 就緒 (127.0.0.1:{AI_TOOLKIT_PORT})")
+            else:
+                LOG(f"  [{t}s] 訓練 UI 啟動中... (port {AI_TOOLKIT_PORT})")
+
+        if ssh_ok and ui_ok and not ui_url:
+            out, _ = ssh_run(
+                ssh_cmd,
+                'grep -ohE "https://[a-zA-Z0-9-]+\\.trycloudflare\\.com" '
+                '/var/log/portal/tunnel_manager.log 2>/dev/null | sort -u')
+            candidates = sorted(set(out.split()))
+            for url in candidates:
+                r2 = subprocess.run(
+                    ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                     "--max-time", "12", url],
+                    capture_output=True, text=True, timeout=25)
+                if r2.stdout.strip() in ("200", "301", "302", "307", "308"):
+                    ui_url = url
+                    LOG(f"  [{t}s] ✅ portal tunnel 候選: {url}")
+                    break
+
+        if ssh_ok and toolkit_ok and model_ok and ui_ok:
+            break
+        time.sleep(15)
+
+    if not ssh_ok:
+        LOG("❌ SSH 一直連不上，無法檢查佈建狀態")
+        return user_ssh, None, ssh_host, ssh_port
+    if not (toolkit_ok and model_ok and ui_ok):
+        LOG("⚠️ 佈建尚未全部就緒，請看實例上的 /var/log/portal/provisioning*.log")
+        LOG(f"    ssh {user_ssh} 'tail -n 100 /var/log/portal/*.log'")
+    return user_ssh, ui_url, ssh_host, ssh_port
+
+
+def show_train_summary(instance_id, info, ssh_cmd, ui_url,
+                       ssh_host=None, ssh_port=None):
+    gpu = info.get("gpu_name", "?")
+    dph = info.get("dph_total", 0)
+    yaml_name = "train_qwen21_character_lora.yaml"
+    host = ssh_host or "<HOST>"
+    port = ssh_port or "<PORT>"
+    print("\n" + "=" * 56)
+    print("🎉 訓練機租機完成！")
+    print("=" * 56)
+    print(f"  實例 ID   : {instance_id}")
+    print(f"  GPU       : {gpu}")
+    print(f"  費率      : ${dph:.3f}/hr")
+    print(f"  SSH       : {ssh_cmd}")
+    print("  ── 訓練 GUI（AI Toolkit UI）──")
+    print(f"   1) SSH 埠轉發（可靠）: {ssh_cmd} -N -L {AI_TOOLKIT_PORT}:127.0.0.1:{AI_TOOLKIT_PORT}")
+    print(f"      然後開 http://localhost:{AI_TOOLKIT_PORT}")
+    if ui_url:
+        print(f"   2) portal tunnel: {ui_url}（可能導向 Instance Portal，非 UI 本身）")
+    print("  ── 資料集與訓練 ──")
+    print(f"   起手 YAML : {TRAIN_AI_TOOLKIT_DIR}/config/{yaml_name}")
+    print(f"   資料集目錄: {TRAIN_DATASET_DIR}（先上傳 jpg/png + 同名 .txt）")
+    print("   上傳訓練集（本機執行，範例）:")
+    print(f"     scp -P {port} -r <你的訓練集>/* root@{host}:{TRAIN_DATASET_DIR}/")
+    print("   開始訓練:")
+    print(f"     {ssh_cmd} 'cd {TRAIN_AI_TOOLKIT_DIR} && ./train.sh'")
+    print("   下載訓好的 LoRA:")
+    print(f"     scp -P {port} root@{host}:{TRAIN_AI_TOOLKIT_DIR}/output/"
+          "<訓練名稱>/<訓練名稱>.safetensors .")
+    print(f"  用完刪除  : {VASTAI} destroy instance {instance_id}")
+    print("               （或 python3 scripts/rent_gpu.py --destroy "
+          f"{instance_id}）")
+    print("=" * 56)
+
+
 def show_summary(instance_id, info, ssh_cmd, tunnel_url):
     gpu = info.get("gpu_name", "?")
     dph = info.get("dph_total", 0)
@@ -396,17 +628,33 @@ def show_summary(instance_id, info, ssh_cmd, tunnel_url):
 
 def main():
     _load_api_key()
-    ap = argparse.ArgumentParser(description="vast.ai 一鍵租機（Qwen-Image-2.1 Turbo）")
+    ap = argparse.ArgumentParser(
+        description="vast.ai 一鍵租機（Qwen-Image-2.1 推理 / LoRA 訓練）")
+    ap.add_argument("--mode", choices=[MODE_INFERENCE, MODE_TRAIN],
+                    default=MODE_INFERENCE,
+                    help="inference=ComfyUI 推論(預設)；train=ai-toolkit LoRA 訓練")
     ap.add_argument("--gpu", default=None, help="指定 GPU 型號, 逗號分隔 (ex: RTX_3090,RTX_4090)")
-    ap.add_argument("--min-vram", type=int, default=12000, help="最低 VRAM MiB (預設 12000；Qwen-2.1-Turbo 12G 實測可跑)")
+    ap.add_argument("--min-vram", type=int, default=None,
+                    help=f"最低 VRAM MiB (inference 預設 {DEFAULT_MIN_VRAM}；train 預設 {TRAIN_MIN_VRAM})")
     ap.add_argument("--max-cost", type=float, default=1.0, help="流量費上限 $/TB (預設 1.0)")
     ap.add_argument("--min-down", type=int, default=800, help="最低下載 Mb/s (預設 800)")
-    ap.add_argument("--disk", type=int, default=DEFAULT_DISK, help=f"磁碟 GB (預設 {DEFAULT_DISK}；開機後不可再調整)")
-    ap.add_argument("--template", default=DEFAULT_TEMPLATE_HASH, help="vast.ai 模板 hash")
+    ap.add_argument("--disk", type=int, default=None,
+                    help=f"磁碟 GB (inference 預設 {DEFAULT_DISK}；train 預設 {TRAIN_DISK}；開機後不可再調整)")
+    ap.add_argument("--template", default=None, help="vast.ai 模板 hash（不給則依 --mode 選預設）")
     ap.add_argument("--server-gpu", action="store_true", help="允許伺服器卡(A10/A100/PRO等)")
     ap.add_argument("--dry-run", action="store_true", help="只掃描不租")
     ap.add_argument("--destroy", metavar="INSTANCE_ID", help="刪除指定實例(停止計費)")
     args = ap.parse_args()
+
+    is_train = args.mode == MODE_TRAIN
+    # 依模式解析預設值（推理模式維持原行為）
+    min_vram = args.min_vram if args.min_vram is not None else (
+        TRAIN_MIN_VRAM if is_train else DEFAULT_MIN_VRAM)
+    disk = args.disk if args.disk is not None else (
+        TRAIN_DISK if is_train else DEFAULT_DISK)
+    template = args.template or (TRAIN_TEMPLATE_HASH if is_train
+                                 else DEFAULT_TEMPLATE_HASH)
+    prov_url = TRAIN_PROVISIONING_URL if is_train else PROVISIONING_URL
 
     if args.destroy:
         rc, out, err = run_vastai(["destroy", "instance", str(args.destroy), "-y"],
@@ -421,13 +669,20 @@ def main():
 
     # 佈建腳本必須已 push 才會被 worker 抓到
     try:
-        r = subprocess.run(["curl", "-sI", "--max-time", "10", PROVISIONING_URL],
+        r = subprocess.run(["curl", "-sI", "--max-time", "10", prov_url],
                            capture_output=True, text=True, timeout=15)
-        if r.stdout.splitlines() and " 200 " not in r.stdout.splitlines()[0]:
-            LOG(f"❌ 佈建腳本 URL 不可用: {PROVISIONING_URL}")
-            LOG("   請先把 repo push 到 GitHub（provisioning.sh 要能被 worker 下載）")
-            return
-        LOG(f"✅ 佈建腳本 URL 可用: {PROVISIONING_URL}")
+        lines = r.stdout.splitlines()
+        if lines and " 200 " not in lines[0]:
+            if args.dry_run:
+                # dry-run 不會租機，僅提示；實際租機前務必先 push
+                LOG(f"⚠️ 佈建腳本 URL 目前不可用: {prov_url}")
+                LOG("   （dry-run 不租機，繼續；實際租機前請先 push 到 GitHub）")
+            else:
+                LOG(f"❌ 佈建腳本 URL 不可用: {prov_url}")
+                LOG("   請先把 repo push 到 GitHub（佈建腳本要能被 worker 下載）")
+                return
+        else:
+            LOG(f"✅ 佈建腳本 URL 可用: {prov_url}")
     except Exception as e:
         LOG(f"⚠️ 無法檢查佈建腳本 URL: {e}（繼續，但開機佈建可能失敗）")
 
@@ -437,14 +692,19 @@ def main():
         gpu_names = [g.replace("_", " ") for g in args.gpu.split(",")]
         gpu_q = "gpu_name in [" + ",".join(gpu_names) + "] "
 
-    LOG(f"🔍 掃描市場 (GPU={gpu_names or '全部'}, VRAM>={args.min_vram//1024}G, "
-        f"流量費<=${args.max_cost}/TB)...")
+    if is_train:
+        LOG(f"🔍 掃描市場 (mode=train, GPU={gpu_names or '全部'}, "
+            f"VRAM>={min_vram}MiB (16G 消費級可), "
+            f"流量費<=${args.max_cost}/TB)...")
+    else:
+        LOG(f"🔍 掃描市場 (GPU={gpu_names or '全部'}, VRAM>={min_vram//1024}G, "
+            f"流量費<=${args.max_cost}/TB)...")
     offers = search_offers(gpu_q)
     if not offers:
         LOG("❌ 查無可租機器")
         return
 
-    hits = filter_offers(offers, args.max_cost, args.min_down, args.min_vram,
+    hits = filter_offers(offers, args.max_cost, args.min_down, min_vram,
                          gpu_names, args.server_gpu)
     if not hits:
         LOG("❌ 目前沒有符合全部條件的機器！")
@@ -473,7 +733,7 @@ def main():
 
     created = None
     for o in hits[:5]:
-        created = create_instance(o["id"], args.disk, args.template)
+        created = create_instance(o["id"], disk, template, args.mode)
         if created:
             LOG(f"✅ 實例建立成功! ID={created}")
             break
@@ -488,8 +748,12 @@ def main():
         LOG("❌ 實例未能 running")
         return
 
-    ssh_cmd, tunnel_url = wait_models_ready(created, info)
-    show_summary(created, info, ssh_cmd, tunnel_url)
+    if is_train:
+        ssh_cmd, ui_url, ssh_host, ssh_port = wait_train_ready(created, info)
+        show_train_summary(created, info, ssh_cmd, ui_url, ssh_host, ssh_port)
+    else:
+        ssh_cmd, tunnel_url = wait_models_ready(created, info)
+        show_summary(created, info, ssh_cmd, tunnel_url)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,314 @@
+#!/bin/bash
+# vast.ai 開機自動佈建（訓練模式）：安裝 ostris/ai-toolkit、下載 Qwen-Image-2.1
+# base int8 訓練模型與官方設定檔、生成起手 YAML、建立資料集目錄、啟動訓練 UI。
+#
+# 由 vast.ai 模板環境變數 PROVISIONING_SCRIPT 指向此檔的 raw URL，於容器開機時執行
+# （vastai/base-image 家族：Supervisor 啟動後的 Phase 9）。對應租機入口：
+#   python3 scripts/rent_gpu.py --mode train
+#
+# 模型來源（查詢日期 2026-10-11；檔名以 HF 官方 repo 核對過，與研究筆記一致）：
+#   Comfy-Org/Qwen-Image-2.1（權重，int8 量化，訓練用 base 非 turbo）：
+#     https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_int8_convrot.safetensors  (約 7.26 GB)
+#     https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors      (約 9.35 GB)
+#     https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors                (約 0.68 GB)
+#   Qwen/Qwen-Image-2.1（僅設定檔／processor，Diffusers 全精度權重不必下載）：
+#     processor/*  */config.json  text_encoder/generation_config.json
+#     scheduler/scheduler_config.json  model_index.json
+#
+# 可用環境變數覆寫（皆有預設）：
+#   AI_TOOLKIT_DIR  AI_TOOLKIT_REF  AI_TOOLKIT_REPO  HF_ROOT  DATASET_DIR
+#   TRAIN_NAME  TRIGGER_WORD  TRAIN_RESOLUTION  TRAIN_STEPS  TRAIN_RANK  TRAIN_LR
+#   TORCH_INDEX_URL  AI_TOOLKIT_UI_PORT
+set -o pipefail
+
+log()  { echo "[provision-train] $*"; }
+fail() { log "error: $*"; exit 1; }
+
+AI_TOOLKIT_DIR="${AI_TOOLKIT_DIR:-/workspace/ai-toolkit}"
+AI_TOOLKIT_REPO="${AI_TOOLKIT_REPO:-https://github.com/ostris/ai-toolkit.git}"
+AI_TOOLKIT_REF="${AI_TOOLKIT_REF:-}"          # 空=main；可填 commit/tag 固定版本
+HF_ROOT="${HF_ROOT:-/workspace/hf}"
+DATASET_DIR="${DATASET_DIR:-/workspace/dataset}"
+AI_TOOLKIT_UI_PORT="${AI_TOOLKIT_UI_PORT:-8675}"
+
+# 起手 YAML 參數（研究筆記 §D 的第三方 12GB 實測設定為底）
+TRAIN_NAME="${TRAIN_NAME:-qwen21_character_lora}"
+TRIGGER_WORD="${TRIGGER_WORD:-mychar}"
+TRAIN_RESOLUTION="${TRAIN_RESOLUTION:-1024}"
+TRAIN_STEPS="${TRAIN_STEPS:-2000}"
+TRAIN_RANK="${TRAIN_RANK:-16}"
+TRAIN_LR="${TRAIN_LR:-0.0001}"
+TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
+TORCH_PKGS="${TORCH_PKGS:-torch==2.13.0 torchvision==0.28.0 torchaudio==2.11.0}"
+
+YAML_PATH="$AI_TOOLKIT_DIR/config/train_qwen21_character_lora.yaml"
+TRAIN_RUNNER="$AI_TOOLKIT_DIR/train.sh"
+
+# huggingface 快取放在 workspace（開機後不隨容器重來；房量也較大）
+export HF_HOME="$HF_ROOT"
+export HF_HUB_CACHE="$HF_ROOT/hub"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+mkdir -p "$HF_ROOT" "$DATASET_DIR" /workspace
+log "ai-toolkit: $AI_TOOLKIT_DIR"
+log "HF cache  : $HF_ROOT"
+log "dataset   : $DATASET_DIR"
+
+# ------------------------------------------------------- node / npm（UI 需要）
+# vastai/base-image 以 NVM 提供 Node LTS；非互動腳本不一定已載入 nvm.sh。
+ensure_npm() {
+  command -v npm >/dev/null 2>&1 && return 0
+  local d
+  for d in "${NVM_DIR:-}" /root/.nvm /usr/local/nvm "$HOME/.nvm"; do
+    if [ -n "$d" ] && [ -s "$d/nvm.sh" ]; then
+      # shellcheck disable=SC1090
+      . "$d/nvm.sh"
+      nvm use --lts >/dev/null 2>&1 || nvm use node >/dev/null 2>&1 || true
+      command -v npm >/dev/null 2>&1 && return 0
+    fi
+  done
+  return 1
+}
+if ! ensure_npm; then
+  fail "找不到 npm/Node（訓練 UI 需要 Node > 20）。此映像預期內建 NVM Node；
+       若環境不同請先安裝 Node 或手動執行佈建。"
+fi
+log "node: $(node --version 2>/dev/null) / npm: $(npm --version 2>/dev/null)"
+
+# ------------------------------------------------------- clone ai-toolkit
+if [ -d "$AI_TOOLKIT_DIR/.git" ]; then
+  log "ai-toolkit 已存在，更新中..."
+  git -C "$AI_TOOLKIT_DIR" fetch --all --quiet || log "warning: git fetch 失敗（沿用現有版本）"
+  if git -C "$AI_TOOLKIT_DIR" pull --ff-only --quiet 2>/dev/null; then
+    log "ai-toolkit updated (pull): $(git -C "$AI_TOOLKIT_DIR" rev-parse --short HEAD)"
+  else
+    log "warning: git pull 失敗（可能有本機修改），沿用現有版本"
+  fi
+else
+  log "clone ai-toolkit..."
+  git clone --quiet "$AI_TOOLKIT_REPO" "$AI_TOOLKIT_DIR" \
+    || fail "git clone 失敗（b 網路或 repo 不可達）"
+fi
+if [ -n "$AI_TOOLKIT_REF" ]; then
+  log "checkout AI_TOOLKIT_REF=$AI_TOOLKIT_REF"
+  git -C "$AI_TOOLKIT_DIR" checkout --quiet "$AI_TOOLKIT_REF" \
+    || fail "git checkout $AI_TOOLKIT_REF 失敗"
+fi
+[ -f "$AI_TOOLKIT_DIR/requirements.txt" ] || fail "ai-toolkit 目錄不完整（缺 requirements.txt）"
+
+# ------------------------------------------------------- venv + torch + deps
+VENV="$AI_TOOLKIT_DIR/venv"
+if [ ! -x "$VENV/bin/python" ]; then
+  log "建立 venv..."
+  python3 -m venv "$VENV" || fail "python3 -m venv 失敗（需要 python >=3.10）"
+fi
+# shellcheck disable=SC1091
+. "$VENV/bin/activate"
+
+# 已有 torch 就跳過（重跑佈建時省時間）
+if ! python -c "import torch" >/dev/null 2>&1; then
+  log "安裝 PyTorch（$TORCH_PKGS，index=$TORCH_INDEX_URL）..."
+  pip install --no-cache-dir $TORCH_PKGS --index-url "$TORCH_INDEX_URL" \
+    || fail "PyTorch 安裝失敗（檢查 GPU 驅動與 index-url 是否相符）"
+else
+  log "PyTorch 已存在，跳過：$(python -c 'import torch; print(torch.__version__)')"
+fi
+
+log "安裝 ai-toolkit requirements（可能數分鐘）..."
+pip install --no-cache-dir -r "$AI_TOOLKIT_DIR/requirements.txt" \
+  || fail "requirements.txt 安裝失敗"
+
+# ------------------------------------------------------- 下載訓練模型（HF cache）
+# 用 venv 的 hf CLI（huggingface_hub）；無 hf 時退回 huggingface-cli。
+HFBIN="$VENV/bin/hf"
+[ -x "$HFBIN" ] || HFBIN="$VENV/bin/huggingface-cli"
+[ -x "$HFBIN" ] || fail "找不到 hf / huggingface-cli（huggingface_hub 未安裝完成）"
+
+COMFY_REPO="Comfy-Org/Qwen-Image-2.1"
+COMFY_BASE="https://huggingface.co/$COMFY_REPO/resolve/main"
+COMFY_FILES=(
+  "diffusion_models/qwen_image_2.1_int8_convrot.safetensors"
+  "text_encoders/qwen3vl_8b_int8_convrot.safetensors"
+  "vae/qwen_image_2.1_vae_bf16.safetensors"
+)
+log "下載訓練權重（int8 三檔，約 17.3GB）..."
+for f in "${COMFY_FILES[@]}"; do
+  log "  weight: $COMFY_BASE/$f"
+  "$HFBIN" download "$COMFY_REPO" "$f" \
+    || fail "權重下載失敗: $f（檢查網路／repo 是否仍存在此檔）"
+done
+
+BASE_REPO="Qwen/Qwen-Image-2.1"
+log "下載官方設定檔／processor（$BASE_REPO）..."
+cfg_args=(download "$BASE_REPO")
+for pat in "processor/*" "*/config.json" "text_encoder/generation_config.json" \
+           "scheduler/scheduler_config.json" "model_index.json"; do
+  cfg_args+=(--include "$pat")
+done
+"$HFBIN" "${cfg_args[@]}" \
+  || fail "官方設定檔下載失敗（ai-toolkit 讀取 config/processor 需要）"
+
+# ------------------------------------------------------- 生成起手 YAML
+mkdir -p "$AI_TOOLKIT_DIR/config"
+log "寫入起手 YAML: $YAML_PATH"
+cat > "$YAML_PATH" <<YAML
+# Qwen-Image-2.1 人物 LoRA 起手設定（ai-toolkit sd_trainer）
+# 由 vast.ai 佈建腳本自動生成；數值以第三方 RTX 4070 12GB 實測設定為底，請視訓練集調整。
+# 用法：cd ai-toolkit && ./train.sh   （等同 python run.py config/train_qwen21_character_lora.yaml）
+job: extension
+config:
+  name: ${TRAIN_NAME}
+  process:
+    - type: sd_trainer
+      training_folder: output
+      device: cuda:0
+      # trigger_word：caption 內寫 [trigger] 會被替換成這個詞；若 caption 尚未含觸發詞，
+      # 也會自動補上（已含則不重複加）。若不想讓設定檔動 caption，可把這行註解掉。
+      trigger_word: "${TRIGGER_WORD}"
+      network:
+        type: lora
+        linear: ${TRAIN_RANK}
+        linear_alpha: ${TRAIN_RANK}
+      save:
+        dtype: float16
+        save_every: 250
+        max_step_saves_to_keep: 4
+      datasets:
+        # folder_path 指向資料集目錄：放 jpg/png/jpeg + 同名 .txt（caption）。
+        # 不支援 webp。不需自行裁切／縮放，loader 會自動 bucket。
+        - folder_path: "${DATASET_DIR}"
+          caption_ext: txt
+          caption_dropout_rate: 0.0
+          shuffle_tokens: false
+          flip_x: false
+          buckets: true
+          square_crop: true
+          resolution: [${TRAIN_RESOLUTION}]
+          cache_latents_to_disk: true
+          cache_text_embeddings: true
+          num_workers: 0
+          cache_latents_num_workers: 1
+      train:
+        batch_size: 1
+        steps: ${TRAIN_STEPS}
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        cache_text_embeddings: true
+        noise_scheduler: flowmatch
+        timestep_type: shift
+        optimizer: adamw8bit
+        lr: ${TRAIN_LR}
+        dtype: bf16
+        skip_first_sample: true
+        disable_sampling: true
+      model:
+        # 權重來源為 Comfy-Org 的 int8 量化 repack；設定檔／processor 來自官方 repo。
+        name_or_path: ${COMFY_REPO}
+        extras_name_or_path: ${BASE_REPO}
+        arch: qwen_image_2
+        quantize: true
+        qtype: convrot8
+        quantize_te: true
+        qtype_te: convrot8
+        low_vram: true
+        layer_offloading: true
+        layer_offloading_transformer_percent: 1.0
+        layer_offloading_text_encoder_percent: 1.0
+      sample:
+        sampler: flowmatch
+        sample_every: 250
+        width: ${TRAIN_RESOLUTION}
+        height: ${TRAIN_RESOLUTION}
+        prompts:
+          - ${TRIGGER_WORD}, portrait, plain background
+        neg: ""
+        seed: 42
+        walk_seed: false
+        guidance_scale: 3.0
+        sample_steps: 40
+meta:
+  name: "[name]"
+  version: "1.0"
+YAML
+[ -s "$YAML_PATH" ] || fail "YAML 生成失敗（檔案為空）"
+
+# ------------------------------------------------------- 訓練啟動腳本
+log "寫入訓練啟動腳本: $TRAIN_RUNNER"
+cat > "$TRAIN_RUNNER" <<RUNNER
+#!/bin/bash
+# 由佈建腳本生成：固定 HF cache 與 CUDA alloc 設定後啟動訓練。
+# 用法：./train.sh [config 檔路徑]（預設 config/train_qwen21_character_lora.yaml）
+set -euo pipefail
+cd "\$(cd "\$(dirname "\$0")" && pwd)"
+export HF_HOME="$HF_ROOT"
+export HF_HUB_CACHE="$HF_ROOT/hub"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+source venv/bin/activate
+CONFIG="\${1:-config/train_qwen21_character_lora.yaml}"
+exec python run.py "\$CONFIG"
+RUNNER
+chmod +x "$TRAIN_RUNNER"
+
+# ------------------------------------------------------- UI build（Supervisor 常駐）
+log "建置訓練 UI（npm install + build）..."
+UI_DIR="$AI_TOOLKIT_DIR/ui"
+[ -d "$UI_DIR" ] || fail "找不到 ui 目錄：$UI_DIR"
+(
+  cd "$UI_DIR" || exit 1
+  npm run install_deps || fail "UI npm install 失敗"
+  npm run update_db   || fail "UI prisma db 生成失敗"
+  npm run build       || fail "UI build 失敗"
+) || fail "訓練 UI 建置失敗"
+
+# 把 UI 以 Supervisor 常駐，並保留 nvm 路徑寫進 wrapper
+NVM_DIR_FOUND=""
+for d in "${NVM_DIR:-}" /root/.nvm /usr/local/nvm "$HOME/.nvm"; do
+  if [ -n "$d" ] && [ -s "$d/nvm.sh" ]; then NVM_DIR_FOUND="$d"; break; fi
+done
+
+UI_WRAPPER="/opt/supervisor-scripts/ai-toolkit-ui.sh"
+if [ -d /opt/supervisor-scripts ]; then
+  log "註冊 Supervisor 服務 ai-toolkit-ui"
+  cat > "$UI_WRAPPER" <<WRAP
+#!/bin/bash
+utils=/opt/supervisor-scripts/utils
+[ -f "\${utils}/logging.sh" ] && . "\${utils}/logging.sh"
+[ -f "\${utils}/environment.sh" ] && . "\${utils}/environment.sh"
+if [ -n "$NVM_DIR_FOUND" ] && [ -s "$NVM_DIR_FOUND/nvm.sh" ]; then
+  export NVM_DIR="$NVM_DIR_FOUND"
+  . "$NVM_DIR_FOUND/nvm.sh"
+  nvm use --lts >/dev/null 2>&1 || nvm use node >/dev/null 2>&1 || true
+fi
+export HF_HOME="$HF_ROOT"
+export HF_HUB_CACHE="$HF_ROOT/hub"
+cd "$UI_DIR" || exit 1
+exec npm run start
+WRAP
+  chmod +x "$UI_WRAPPER"
+  cat > /etc/supervisor/conf.d/ai-toolkit-ui.conf <<CONF
+[program:ai-toolkit-ui]
+environment=PROC_NAME="%(program_name)s"
+command=$UI_WRAPPER
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+CONF
+  supervisorctl reread >/dev/null 2>&1 || true
+  supervisorctl update >/dev/null 2>&1 || true
+  supervisorctl restart ai-toolkit-ui >/dev/null 2>&1 \
+    || supervisorctl start ai-toolkit-ui >/dev/null 2>&1 \
+    || log "warning: supervisorctl 啟動失敗，稍後由 Supervisor 自動拉起"
+else
+  log "warning: 找不到 /opt/supervisor-scripts，改用 nohup 啟動 UI"
+  ( cd "$UI_DIR" && HF_HOME="$HF_ROOT" HF_HUB_CACHE="$HF_ROOT/hub" \
+      nohup npm run start >/var/log/ai-toolkit-ui.log 2>&1 & ) || true
+fi
+
+log "佈建完成。UI 應在 http://127.0.0.1:$AI_TOOLKIT_UI_PORT（經 Instance Portal / SSH 埠轉發對外）"
+log "訓練：cd $AI_TOOLKIT_DIR && ./train.sh"
+log "資料集：$DATASET_DIR（放 jpg/png + 同名 .txt）"
+log "provisioning complete"
