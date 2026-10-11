@@ -142,8 +142,8 @@ def ptb(x):
 
 
 def filter_offers(offers, max_cost, min_down, min_vram, gpu_names=None,
-                  server_gpu=False):
-    """篩選條件：VRAM、算力、下載頻寬、流量費、PCIe 頻寬"""
+                  server_gpu=False, min_disk_free=0):
+    """篩選條件：VRAM、算力、下載頻寬、流量費、PCIe 頻寬、主機可用磁碟"""
     hits = []
     for o in offers:
         if gpu_names and o.get("gpu_name") not in gpu_names:
@@ -163,6 +163,10 @@ def filter_offers(offers, max_cost, min_down, min_vram, gpu_names=None,
         if ptb(o.get("inet_up_cost")) > max_cost:
             continue
         if o.get("pcie_bw", 0) < 16:             # PCIe 沒閹割
+            continue
+        # 主機可用磁碟：不足時 vast 會「默默縮水」實際配置（2026-10-11 實測
+        # 要求 80GB 只給 18.5GB，下載模型時 No space left on device）
+        if min_disk_free and o.get("disk_space", 0) < min_disk_free:
             continue
         hits.append(o)
     # 排序：純粹便宜優先（Qwen-Image-2.1-Turbo 12G VRAM 實測可跑，不強制 24G）
@@ -695,7 +699,7 @@ def main():
     if is_train:
         LOG(f"🔍 掃描市場 (mode=train, GPU={gpu_names or '全部'}, "
             f"VRAM>={min_vram}MiB (16G 消費級可), "
-            f"流量費<=${args.max_cost}/TB)...")
+            f"主機磁碟>={disk}G, 流量費<=${args.max_cost}/TB)...")
     else:
         LOG(f"🔍 掃描市場 (GPU={gpu_names or '全部'}, VRAM>={min_vram//1024}G, "
             f"流量費<=${args.max_cost}/TB)...")
@@ -705,7 +709,7 @@ def main():
         return
 
     hits = filter_offers(offers, args.max_cost, args.min_down, min_vram,
-                         gpu_names, args.server_gpu)
+                         gpu_names, args.server_gpu, min_disk_free=disk)
     if not hits:
         LOG("❌ 目前沒有符合全部條件的機器！")
         LOG("   可試: --gpu 指定型號 / --max-cost 2 放寬流量費 / "
