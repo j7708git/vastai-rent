@@ -4,12 +4,16 @@
 # 由 vast.ai 模板環境變數 PROVISIONING_SCRIPT 指向此檔的 raw URL，於容器啟動時執行。
 # 模型來源：https://huggingface.co/Comfy-Org/Qwen-Image-2.1（公開 repo，免 token）
 #
+# 下載方式：優先 huggingface_hub（Xet 高速傳輸、續傳、自動驗 sha），
+#           映像缺套件時自動補裝，裝不起來退回 wget -c。
+#
 # 下載清單（Turbo int8 最小集，約 17.3 GB）：
 #   diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors  (7.26 GB)
 #   text_encoders/qwen3vl_8b_int8_convrot.safetensors               (9.35 GB)
 #   vae/qwen_image_2.1_vae_bf16.safetensors                         (0.68 GB)
 #
 # 查詢日期 2026-10-10；檔名以 HF API 核對過。
+# HF 下載改版 2026-10-11：已在 vastai/comfy 映像實測（0.68GB ≈ 2 Gb/s、etag 續傳/跳過）。
 set -o pipefail
 
 log() { echo "[provision] $*"; }
@@ -34,8 +38,13 @@ MODELS="$COMFY_DIR/models"
 mkdir -p "$MODELS/diffusion_models" "$MODELS/text_encoders" "$MODELS/vae"
 
 # ------------------------------------------------------------------ downloads
+# 優先用 huggingface_hub（Xet 高速傳輸、斷點續傳、下載後自動驗 sha），
+# 映像沒有時自動補裝；裝不起來才退回 wget -c。
+# HF_TOKEN／HF_HOME 由 vast.ai 模板環境變數帶入容器，hub 會自動讀取（本 repo 公開，免 token 也能抓）。
+HF_REPO_ID="Comfy-Org/Qwen-Image-2.1"
+
 # wget -c 支援斷點續傳。dest 為 "$MODELS/<類別>"（絕對路徑），不要用相對路徑。
-download() {
+download_wget() {
   local category="$1"
   local filename="$2"
   local dest_dir="$MODELS/$category"
@@ -54,10 +63,60 @@ download() {
   log "downloaded: $dest_dir/$filename"
 }
 
+# 偵測／補裝 huggingface_hub；Python 3.12 externally-managed 環境退一步用
+# --break-system-packages（pip 舊版不認得此旗標會失敗，由呼叫端走 wget fallback）。
+ensure_hf_py() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 -c "import huggingface_hub" 2>/dev/null && return 0
+  log "huggingface_hub 未預裝，補裝中（huggingface_hub + hf_xet）..."
+  python3 -m pip install --quiet --no-cache-dir huggingface_hub hf_xet 2>/dev/null \
+    || python3 -m pip install --quiet --no-cache-dir --break-system-packages \
+         huggingface_hub hf_xet 2>/dev/null
+  python3 -c "import huggingface_hub" 2>/dev/null
+}
+
 FAILED=0
-download diffusion_models qwen_image_2.1_turbo_int8_convrot.safetensors || FAILED=1
-download text_encoders    qwen3vl_8b_int8_convrot.safetensors              || FAILED=1
-download vae              qwen_image_2.1_vae_bf16.safetensors              || FAILED=1
+if ensure_hf_py; then
+  # Xet 高效能傳輸（hub 2.x 起取代 hf_transfer）；無 hf_xet 時僅是多餘變數，無害
+  export HF_XET_HIGH_PERFORMANCE=1
+  log "downloading via huggingface_hub (Xet high-performance)..."
+  python3 - "$MODELS" "$HF_REPO_ID" <<'PY' || FAILED=1
+import os
+import sys
+
+from huggingface_hub import hf_hub_download
+
+models_dir, repo_id = sys.argv[1], sys.argv[2]
+files = [
+    ("diffusion_models", "qwen_image_2.1_turbo_int8_convrot.safetensors"),
+    ("text_encoders", "qwen3vl_8b_int8_convrot.safetensors"),
+    ("vae", "qwen_image_2.1_vae_bf16.safetensors"),
+]
+
+failed = False
+for category, filename in files:
+    dest = os.path.join(models_dir, category, filename)
+    if os.path.isfile(dest) and os.path.getsize(dest) > 0:
+        print(f"[provision] already present, skip: {filename}")
+        continue
+    print(f"[provision] downloading (hf): {category}/{filename}", flush=True)
+    try:
+        hf_hub_download(repo_id=repo_id, filename=f"{category}/{filename}",
+                        local_dir=models_dir)
+        print(f"[provision] downloaded: {dest}", flush=True)
+    except Exception as exc:  # noqa: BLE001 - 佈建腳本要的是明確錯誤訊息
+        print(f"[provision] error: hf download failed {category}/{filename}: {exc}",
+              flush=True)
+        failed = True
+
+sys.exit(1 if failed else 0)
+PY
+else
+  log "huggingface_hub 無法使用，退回 wget -c"
+  download_wget diffusion_models qwen_image_2.1_turbo_int8_convrot.safetensors || FAILED=1
+  download_wget text_encoders    qwen3vl_8b_int8_convrot.safetensors              || FAILED=1
+  download_wget vae              qwen_image_2.1_vae_bf16.safetensors              || FAILED=1
+fi
 
 # ------------------------------------------------------- update ComfyUI code
 # Qwen-Image-2.1 節點（TextEncodeQwenImage21 / QwenImage21Cache）需要

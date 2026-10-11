@@ -142,7 +142,7 @@ def ptb(x):
 
 
 def filter_offers(offers, max_cost, min_down, min_vram, gpu_names=None,
-                  server_gpu=False, min_disk_free=0):
+                  server_gpu=False, min_disk_free=0, min_pcie=0):
     """篩選條件：VRAM、算力、下載頻寬、流量費、PCIe 頻寬、主機可用磁碟"""
     hits = []
     for o in offers:
@@ -162,7 +162,7 @@ def filter_offers(offers, max_cost, min_down, min_vram, gpu_names=None,
             continue
         if ptb(o.get("inet_up_cost")) > max_cost:
             continue
-        if o.get("pcie_bw", 0) < 16:             # PCIe 沒閹割
+        if min_pcie and o.get("pcie_bw", 0) < min_pcie:  # PCIe 沒閹割
             continue
         # 主機可用磁碟：不足時 vast 會「默默縮水」實際配置（2026-10-11 實測
         # 要求 80GB 只給 18.5GB，下載模型時 No space left on device）
@@ -638,10 +638,14 @@ def main():
                     default=MODE_INFERENCE,
                     help="inference=ComfyUI 推論(預設)；train=ai-toolkit LoRA 訓練")
     ap.add_argument("--gpu", default=None, help="指定 GPU 型號, 逗號分隔 (ex: RTX_3090,RTX_4090)")
+    ap.add_argument("--offer-id", type=int, default=None,
+                    help="指定 offer ID 直接租（跳過篩選，鎖定特定機器）")
     ap.add_argument("--min-vram", type=int, default=None,
                     help=f"最低 VRAM MiB (inference 預設 {DEFAULT_MIN_VRAM}；train 預設 {TRAIN_MIN_VRAM})")
     ap.add_argument("--max-cost", type=float, default=1.0, help="流量費上限 $/TB (預設 1.0)")
     ap.add_argument("--min-down", type=int, default=800, help="最低下載 Mb/s (預設 800)")
+    ap.add_argument("--min-pcie", type=float, default=0,
+                    help="最低 PCIe 頻寬 GB/s (預設 0=不限；設 16 可避開被閹割的卡)")
     ap.add_argument("--disk", type=int, default=None,
                     help=f"磁碟 GB (inference 預設 {DEFAULT_DISK}；train 預設 {TRAIN_DISK}；開機後不可再調整)")
     ap.add_argument("--template", default=None, help="vast.ai 模板 hash（不給則依 --mode 選預設）")
@@ -709,7 +713,16 @@ def main():
         return
 
     hits = filter_offers(offers, args.max_cost, args.min_down, min_vram,
-                         gpu_names, args.server_gpu, min_disk_free=disk)
+                         gpu_names, args.server_gpu, min_disk_free=disk,
+                         min_pcie=args.min_pcie)
+    if args.offer_id:
+        # 指定 offer：直接鎖定該台，跳過門檻篩選（仍須存在於市場清單）
+        picked = [o for o in offers if o.get("id") == args.offer_id]
+        if not picked:
+            LOG(f"❌ 指定的 offer id={args.offer_id} 不在目前可租清單（已被租走？）")
+            return
+        LOG(f"🎯 指定 offer id={args.offer_id}，鎖定該台（略過篩選）")
+        hits = picked
     if not hits:
         LOG("❌ 目前沒有符合全部條件的機器！")
         LOG("   可試: --gpu 指定型號 / --max-cost 2 放寬流量費 / "

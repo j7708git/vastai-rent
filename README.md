@@ -39,6 +39,9 @@ python3 scripts/rent_gpu.py
 # 常用選項
 python3 scripts/rent_gpu.py --gpu RTX_3090,RTX_4090   # 指定 GPU 型號
 python3 scripts/rent_gpu.py --min-vram 12000          # 最低 VRAM (MiB)
+python3 scripts/rent_gpu.py --min-down 1000           # 最低下載 Mb/s（預設 800）
+python3 scripts/rent_gpu.py --min-pcie 16             # 最低 PCIe 頻寬 GB/s（預設 0=不限）
+python3 scripts/rent_gpu.py --offer-id 12345678       # 鎖定特定 offer（跳過篩選）
 python3 scripts/rent_gpu.py --dry-run                 # 只掃描不租
 
 # 用完刪除實例（停止計費）
@@ -62,6 +65,11 @@ python3 scripts/rent_gpu.py --destroy <實例ID>
 | VAE | `qwen_image_2.1_vae_bf16.safetensors` | 0.68 GB |
 
 並將 ComfyUI 更新至 ≥ v0.37.0（Qwen-Image-2.1 節點所需的最低版本）。
+
+**下載方式**：模型一律走 `huggingface_hub`（Xet 高速傳輸、斷點續傳、下載後自動
+驗 sha）；映像沒預裝時會自動補裝，補裝失敗才退回 `wget -c`。容器內的
+`HF_TOKEN`／`HF_HOME` 環境變數會被自動讀取（本 repo 公開，無 token 也可下載）。
+已在 `vastai/comfy` 映像實測：0.68GB 約 2 Gb/s、已存在檔案秒級跳過。
 
 **Turbo 生圖參數**：steps=8、cfg=1、sampler=euler、scheduler=simple。
 
