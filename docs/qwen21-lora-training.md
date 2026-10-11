@@ -40,7 +40,10 @@ ai-toolkit 的資料集是「一個資料夾，裡面放圖片 + 同名文字檔
 
 - 圖片格式：**jpg / jpeg / png**。**不支援 webp。**
 - 每張圖搭配**同名 `.txt`**，內容是 caption，例如 `image001.png` 配 `image001.txt`。
-- **不需自行裁切或縮放**：loader 會自動依 aspect ratio 分桶（bucket）並縮放。
+- **不需自行裁切或縮放**：loader 會自動依 aspect ratio 分桶（bucket，`buckets: true`）並縮放；
+  起手設定**不開** `square_crop`（維持預設 `false`）。若把它設成 `true`，
+  loader 會**跳過分桶**、把每張圖中央裁成 `resolution × resolution` 的正方形，
+  建議保持關閉（官方範例與 ai-toolkit 預設皆為 `false`）。
 - 建議 **15–30 張**，涵蓋不同角度、表情、姿勢、服裝、背景；
   只放你希望推論時看到的視角。
 - caption 建議描述「會變動的屬性」（服裝、場景、動作），
@@ -51,9 +54,11 @@ ai-toolkit 的資料集是「一個資料夾，裡面放圖片 + 同名文字檔
 
 - caption 內寫 `[trigger]` 佔位符 → 執行時替換成設定裡的 `trigger_word`。
 - 若設定了 `trigger_word` 而 caption 沒提到它 → 會自動補進 caption（已含則不重複加）。
+- 這個注入發生在**寫入 text-embedding 快取之前**，所以即使同時開了
+  `cache_text_embeddings` 仍會生效（舊版「開快取時觸發詞失效」的警語已過時）。
 
 所以兩種寫法都可用：直接在 caption 寫觸發詞，或在 caption 寫 `[trigger]` 並靠設定替換。
-起手設定已帶一個 `trigger_word` 佔位；不想要設定檔動 caption 時，把該行註解掉即可。
+起手設定已帶一個 `trigger_word` 佔位；若 caption 已直接寫入觸發詞，把該行註解掉可避免重複注入。
 
 ### 目錄結構
 
@@ -129,24 +134,73 @@ ssh -i <你的私鑰> -p <PORT> root@<HOST> \
 | `datasets[].folder_path` | `/workspace/dataset` | 資料集路徑 |
 | `datasets[].resolution` | `[1024]` | 訓練解析度；影像邊長須為 **32 的倍數** |
 | `save.save_every` / `max_step_saves_to_keep` | 250 / 4 | 每 250 步存一次，保留 4 個中繼點 |
-| `train.steps` | 2000 | 總步數；建議 1500–3000，每 250 步比較 |
+| `train.steps` | 2000 | 總步數。**先跑 200 步冒煙測試**（loss 有動、能存檔、不 OOM），主力結果看 **1250–1750 步**，**每 250 步比較** checkpoint（見「訓後自檢與步數」） |
 | `train.optimizer` | `adamw8bit` | 8-bit AdamW，省 VRAM |
 | `train.lr` | `0.0001` | 學習率 |
 | `train.noise_scheduler` / `timestep_type` | `flowmatch` / `shift` | 2.1 的 flow-matching 設定 |
-| `train.gradient_checkpointing` | `true` | 省 VRAM，略慢 |
+| `train.gradient_checkpointing` | `true` | 省 VRAM，略慢。由 `TRAIN_GRAD_CP` 環境變數控制（預設 `true`）；與 `layer_offloading` 併用是 issue #1054 的組合，見「訓後自檢與步數」 |
 | `train.disable_sampling` | `true` | 訓練中不出樣本圖（省 VRAM／時間） |
 | `model.arch` | `qwen_image_2` | 2.1 專用架構；別與初代 Qwen-Image 混用 |
 | `model.name_or_path` | `Comfy-Org/Qwen-Image-2.1` | 權重來源（int8 量化 repack） |
 | `model.extras_name_or_path` | `Qwen/Qwen-Image-2.1` | 設定檔／processor 來源 |
 | `model.quantize` / `qtype` | `true` / `convrot8` | 直接以 int8 量化權重訓練，省 VRAM |
-| `model.low_vram` / `layer_offloading` | `true` / `true` | 低 VRAM 模式＋CPU 層卸載 |
+| `model.low_vram` / `layer_offloading` | `true` / `true` | 低 VRAM 模式＋CPU 層卸載。`layer_offloading`（含兩個 `*_percent`）由 `TRAIN_LAYER_OFFLOAD` 環境變數一起控制（預設 `true`） |
+| `sample.guidance_scale` | `1.0` | Qwen-Image-2.1 是 **CFG-distilled**：官方推論用 **CFG=1**。ai-toolkit 的 sample pipeline 在 `>1` 時會真的多跑一次 CFG forward，會偏離真實推論，故用 `1.0` |
 
 **12–16GB 卡的建議**：保留 `low_vram`、`layer_offloading`（含兩個 `*_percent: 1.0`）、
 `optimizer: adamw8bit`、`disable_sampling: true`，並可把 `resolution` 降到 512–768。
 
+**兩個記憶體策略環境變數**（在租機前 export，或寫進 vast.ai 模板環境變數；未設時與預設行為相同）：
+
+| 環境變數 | 預設 | 對應 YAML 欄位 | 說明 |
+| --- | --- | --- | --- |
+| `TRAIN_GRAD_CP` | `true` | `train.gradient_checkpointing` | `false` 可關掉 checkpointing（省時間但 **VRAM 需求上升**） |
+| `TRAIN_LAYER_OFFLOAD` | `true` | `model.layer_offloading`（含兩個 `*_percent`） | `false` 可整組關掉 CPU 層卸載（VRAM 需求上升） |
+
 改完 YAML 後可另存不同檔名（放在 `config/` 下），再用
 `./train.sh config/<你的檔名>.yaml` 執行指定的設定；不帶參數時預設跑
 `config/train_qwen21_character_lora.yaml`。
+
+## 訓後自檢與步數（確認 LoRA 不是「空包彈」）
+
+### 為什麼要自檢：issue #1054 / #1075
+
+ai-toolkit 有兩條回報，症狀都是「訓練 loss 看起來正常，但存出的 LoRA 在 ComfyUI
+載入後**完全沒效果**」，原因是整批 `lora_B` 權重被存成 0（`lora_B` 是零初始化，
+若梯度自始為 0 就會永遠為 0）：
+
+- **#1054（closed 未修）**：`gradient_checkpointing: true` ＋ `layer_offloading`
+  同時開啟時，回報 **192 個 `lora_B` 全為 0**。**我們的起手設定正好是這個組合。**
+- **#1075（open）**：另一個變體，即使關掉 checkpointing／offload，仍有部分
+  `img_mlp` 的 `lora_B` 全零。
+
+**本專案已於實機（RTX 3090 24G、ai-toolkit `f7a1fb9`、起手設定組合）實測**：10 步產出的
+LoRA 中 **192 個 `lora_B` 全數非零**，**#1054 與 #1075 皆未重現**，因此**不必**為此放棄
+base int8 路線或預設關掉 checkpointing。但仍建議正式訓練後跑一次自檢（成本近乎零）。
+
+### 自檢指令（`scripts/check_lora.py`）
+
+把訓好的 LoRA 下載回本機後：
+
+```bash
+python3 scripts/check_lora.py <下載的 LoRA.safetensors>
+```
+
+它會統計 `lora_B.weight` 張量總數與全為 0 的數量，並列出前幾個全零的 key。
+退出碼語意：**0＝全部非零（正常）**、**1＝有全零的 `lora_B`（疑似空包彈）**、
+**2＝檔案讀不到／格式不符**（例如不是 safetensors、或檔案內沒有 `lora_B`）。
+
+若自檢回報疑似空包彈，且訓練時 checkpointing 與 offload 同時開啟，可先用
+`TRAIN_GRAD_CP=false` 關掉 `gradient_checkpointing` 重訓（VRAM 需求上升）；
+必要時再一併 `TRAIN_LAYER_OFFLOAD=false`。
+
+### 步數建議
+
+- **先 200 步冒煙測試**：確認 loss 有在動、能存檔、不會 OOM（也可把 `TRAIN_STEPS` 改小）。
+- **主力結果看 1250–1750 步**：社群在 2.1 上的實測常見最佳點落在 1500 附近，
+  1750 之後有機會出現皮膚顆粒化等過擬合現象。
+- **每 250 步比較**：起手設定每 250 步存一次（`save_every: 250`）。比較時用**同一組
+  prompt、seed、解析度、CFG**（2.1 固定 CFG=1），另外跑一個「無關 prompt」檢查有沒有外洩。
 
 ## 訓完：把 LoRA 放回 ComfyUI 使用
 
@@ -181,3 +235,5 @@ scp -P <PORT> root@<HOST>:/workspace/ai-toolkit/output/<config.name>/<config.nam
   單輪約 **US$1–3**，建議抓 **US$3–5** buffer（含試錯、重跑）。實際費率以租機當下為準。
 - **Blackwell 世代（5070 Ti / 5080）在訓練情境的相容性未經本專案實測**；
   首次試訓建議先跑短步數（例如把 `steps` 改成 10）冒煙測試。
+- **訓練完務必做一次空包彈自檢**：`python3 scripts/check_lora.py <LoRA.safetensors>`，
+  確認 `lora_B` 非零（見「訓後自檢與步數」）。

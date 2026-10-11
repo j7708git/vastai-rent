@@ -18,7 +18,7 @@
 # 可用環境變數覆寫（皆有預設）：
 #   AI_TOOLKIT_DIR  AI_TOOLKIT_REF  AI_TOOLKIT_REPO  HF_ROOT  DATASET_DIR
 #   TRAIN_NAME  TRIGGER_WORD  TRAIN_RESOLUTION  TRAIN_STEPS  TRAIN_RANK  TRAIN_LR
-#   TORCH_INDEX_URL  AI_TOOLKIT_UI_PORT
+#   TRAIN_GRAD_CP  TRAIN_LAYER_OFFLOAD  TORCH_INDEX_URL  AI_TOOLKIT_UI_PORT
 set -o pipefail
 
 log()  { echo "[provision-train] $*"; }
@@ -38,6 +38,9 @@ TRAIN_RESOLUTION="${TRAIN_RESOLUTION:-1024}"
 TRAIN_STEPS="${TRAIN_STEPS:-2000}"
 TRAIN_RANK="${TRAIN_RANK:-16}"
 TRAIN_LR="${TRAIN_LR:-0.0001}"
+# 記憶體策略開關（見 YAML 內註解；兩者同時開啟是 issue #1054 的高風險組合）。
+TRAIN_GRAD_CP="${TRAIN_GRAD_CP:-true}"             # → train.gradient_checkpointing
+TRAIN_LAYER_OFFLOAD="${TRAIN_LAYER_OFFLOAD:-true}"  # → model.layer_offloading（含兩個 *_percent）
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 TORCH_PKGS="${TORCH_PKGS:-torch==2.13.0 torchvision==0.28.0 torchaudio==2.11.0}"
 
@@ -175,10 +178,23 @@ done
 # ------------------------------------------------------- 生成起手 YAML
 mkdir -p "$AI_TOOLKIT_DIR/config"
 log "寫入起手 YAML: $YAML_PATH"
+
+# model.layer_offloading 與兩個 *_percent 一併受 TRAIN_LAYER_OFFLOAD 控制；
+# 關閉時不寫 percent，避免留下「看似有開」的誤導值。
+if [ "$TRAIN_LAYER_OFFLOAD" = "true" ]; then
+  LAYER_OFFLOAD_BLOCK="        layer_offloading: true
+        # 0 是關閉、1.0 是 100% 的層（ai-toolkit ModelConfig）。
+        layer_offloading_transformer_percent: 1.0
+        layer_offloading_text_encoder_percent: 1.0"
+else
+  LAYER_OFFLOAD_BLOCK="        layer_offloading: false"
+fi
+
 cat > "$YAML_PATH" <<YAML
 # Qwen-Image-2.1 人物 LoRA 起手設定（ai-toolkit sd_trainer）
 # 由 vast.ai 佈建腳本自動生成；數值以第三方 RTX 4070 12GB 實測設定為底，請視訓練集調整。
 # 用法：cd ai-toolkit && ./train.sh   （等同 python run.py config/train_qwen21_character_lora.yaml）
+# 訓練完務必用本專案的 scripts/check_lora.py 檢查產出的 LoRA，確認 lora_B 非零（不是空包彈）。
 job: extension
 config:
   name: ${TRAIN_NAME}
@@ -187,7 +203,10 @@ config:
       training_folder: output
       device: cuda:0
       # trigger_word：caption 內寫 [trigger] 會被替換成這個詞；若 caption 尚未含觸發詞，
-      # 也會自動補上（已含則不重複加）。若不想讓設定檔動 caption，可把這行註解掉。
+      # 也會自動補上（已含則不重複加）。
+      # 註：現行 ai-toolkit（0.13.25 / commit f7a1fb9）在寫入 text-embedding 快取「之前」就已
+      # 注入觸發詞，所以即使開了 cache_text_embeddings 仍會生效（舊版警語已過時）。
+      # 保留本欄位屬保險做法；若你的 caption 已直接寫入觸發詞，把這行註解掉可避免重複注入。
       trigger_word: "${TRIGGER_WORD}"
       network:
         type: lora
@@ -199,14 +218,15 @@ config:
         max_step_saves_to_keep: 4
       datasets:
         # folder_path 指向資料集目錄：放 jpg/png/jpeg + 同名 .txt（caption）。
-        # 不支援 webp。不需自行裁切／縮放，loader 會自動 bucket。
+        # 不支援 webp。不需自行裁切／縮放，loader 會自動依 aspect ratio 分桶。
         - folder_path: "${DATASET_DIR}"
           caption_ext: txt
           caption_dropout_rate: 0.0
           shuffle_tokens: false
           flip_x: false
           buckets: true
-          square_crop: true
+          # square_crop 保持預設 false（故不寫此欄）：true 會跳過 aspect-ratio 分桶、
+          # 把每張圖中央裁成 resolution × resolution 的正方形。官方範例與預設皆 false。
           resolution: [${TRAIN_RESOLUTION}]
           cache_latents_to_disk: true
           cache_text_embeddings: true
@@ -218,7 +238,11 @@ config:
         gradient_accumulation: 1
         train_unet: true
         train_text_encoder: false
-        gradient_checkpointing: true
+        # gradient_checkpointing 與 layer_offloading 同時開啟，是 issue #1054 回報會產生
+        # 「全零 lora_B 空包彈 LoRA」的組合；但本專案已於實機（RTX 3090 24G）實測「未重現」。
+        # 若日後遇到「LoRA 存得出來卻完全沒效果」，先用本專案 scripts/check_lora.py 檢查，
+        # 再考慮把 TRAIN_GRAD_CP 設為 false 關掉 checkpointing（VRAM 需求上升）。
+        gradient_checkpointing: ${TRAIN_GRAD_CP}
         cache_text_embeddings: true
         noise_scheduler: flowmatch
         timestep_type: shift
@@ -237,9 +261,11 @@ config:
         quantize_te: true
         qtype_te: convrot8
         low_vram: true
-        layer_offloading: true
-        layer_offloading_transformer_percent: 1.0
-        layer_offloading_text_encoder_percent: 1.0
+        # layer_offloading 與 gradient_checkpointing 同時開啟，是 issue #1054 回報會產生
+        # 「全零 lora_B 空包彈 LoRA」的組合；本專案實機（RTX 3090 24G）已實測「未重現」。
+        # 用 TRAIN_LAYER_OFFLOAD=false 可一併關閉 layer_offloading 與兩個 *_percent
+        # （16GB 卡建議保留 true；24GB 卡可視情況關閉）。
+$LAYER_OFFLOAD_BLOCK
       sample:
         sampler: flowmatch
         sample_every: 250
@@ -250,7 +276,9 @@ config:
         neg: ""
         seed: 42
         walk_seed: false
-        guidance_scale: 3.0
+        # guidance_scale 用 1.0：Qwen-Image-2.1 是 CFG-distilled，官方推論用 CFG=1；
+        # ai-toolkit 的 sample pipeline 在 >1 時會真的多跑一次 CFG forward。
+        guidance_scale: 1.0
         sample_steps: 40
 meta:
   name: "[name]"
