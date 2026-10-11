@@ -55,7 +55,8 @@ log "HF cache  : $HF_ROOT"
 log "dataset   : $DATASET_DIR"
 
 # ------------------------------------------------------- node / npm（UI 需要）
-# vastai/base-image 以 NVM 提供 Node LTS；非互動腳本不一定已載入 nvm.sh。
+# 官方 vastai/pytorch 映像「沒有」內建 Node（2026-10-11 實測）。
+# 策略：先找系統／NVM 的 npm，找不到就從 nodejs.org 抓 LTS tarball 自裝。
 ensure_npm() {
   command -v npm >/dev/null 2>&1 && return 0
   local d
@@ -69,11 +70,33 @@ ensure_npm() {
   done
   return 1
 }
+install_node_tarball() {
+  # 固定版本求穩定；用 .tar.gz（gzip 必有，xz 不一定有）
+  local ver="v22.14.0" arch pkg url
+  case "$(uname -m)" in
+    x86_64) arch=x64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) log "error: 未知的 CPU 架構 $(uname -m)，無法安裝 Node"; return 1 ;;
+  esac
+  pkg="node-$ver-linux-$arch"
+  url="https://nodejs.org/dist/$ver/$pkg.tar.gz"
+  log "下載 Node.js $ver tarball → /opt/node ..."
+  mkdir -p /opt/node || return 1
+  wget -qO "/tmp/$pkg.tar.gz" "$url" || { log "error: Node tarball 下載失敗 $url"; return 1; }
+  tar -xzf "/tmp/$pkg.tar.gz" -C /opt/node --strip-components=1 || return 1
+  rm -f "/tmp/$pkg.tar.gz"
+  export PATH="/opt/node/bin:$PATH"
+  command -v npm >/dev/null 2>&1
+}
 if ! ensure_npm; then
-  fail "找不到 npm/Node（訓練 UI 需要 Node > 20）。此映像預期內建 NVM Node；
-       若環境不同請先安裝 Node 或手動執行佈建。"
+  install_node_tarball || fail "找不到 npm/Node 且 tarball 安裝失敗（訓練 UI 需要 Node > 20）"
 fi
-log "node: $(node --version 2>/dev/null) / npm: $(npm --version 2>/dev/null)"
+command -v git >/dev/null 2>&1 || {
+  log "缺 git，嘗試 apt 安裝..."
+  (apt-get update -qq && apt-get install -y -qq git) >/dev/null 2>&1 \
+    || fail "缺 git 且 apt 安裝失敗（clone ai-toolkit 需要）"
+}
+log "node: $(node --version 2>/dev/null) / npm: $(npm --version 2>/dev/null) / git: $(git --version 2>/dev/null)"
 
 # ------------------------------------------------------- clone ai-toolkit
 if [ -d "$AI_TOOLKIT_DIR/.git" ]; then
