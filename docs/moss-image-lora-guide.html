@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOSS-Image 人物 LoRA 訓練指南（ai-toolkit）</title>
+<style>
+  :root{
+    --bg:#fbfbfa; --fg:#1c1d21; --muted:#61646e; --line:#e3e4e8;
+    --card:#ffffff; --soft:#f3f4f6; --accent:#3b4cca; --accent-soft:#eceefb;
+    --warn-bg:#fdf5e6; --warn-line:#e8c987;
+    --ok-bg:#eef7f1; --ok-line:#a9d3ba;
+    --code-bg:#1e2129; --code-fg:#e8eaf0;
+    --radius:10px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#15161a; --fg:#e7e8ec; --muted:#a0a4b0; --line:#2b2d34;
+      --card:#1c1e24; --soft:#20232a; --accent:#8f9bf5; --accent-soft:#232741;
+      --warn-bg:#2a2416; --warn-line:#6b5722;
+      --ok-bg:#16261d; --ok-line:#2f5c43;
+      --code-bg:#0e1014; --code-fg:#e8eaf0;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+    font-size:16.5px; line-height:1.75; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.9em;
+       background:var(--soft); padding:.12em .38em; border-radius:4px}
+  pre code{background:none; padding:0}
+
+  .wrap{max-width:1180px; margin:0 auto; padding:0 22px}
+  header.top{border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0; z-index:20}
+  .top-inner{display:flex; align-items:center; gap:14px; padding-block:12px}
+  .top-inner .tag{font-size:.72rem; letter-spacing:.08em; text-transform:uppercase;
+     color:var(--accent); background:var(--accent-soft); padding:3px 9px; border-radius:999px; white-space:nowrap}
+  .top-inner h1{font-size:1rem; margin:0; font-weight:600}
+  .top-inner .date{margin-left:auto; font-size:.8rem; color:var(--muted); white-space:nowrap}
+
+  .hero{padding-block:44px 30px; border-bottom:1px solid var(--line)}
+  .hero h2{font-size:clamp(1.6rem,3.2vw,2.3rem); line-height:1.3; margin:0 0 14px; letter-spacing:-.01em}
+  .hero p.lead{font-size:1.03rem; color:var(--muted); max-width:64ch; margin:0 0 26px}
+  .facts{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px}
+  .fact{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px}
+  .fact dt{font-size:.76rem; color:var(--muted); letter-spacing:.03em; margin:0 0 4px}
+  .fact dd{margin:0; font-size:1.22rem; font-weight:650; letter-spacing:-.01em}
+  .fact dd small{font-size:.72rem; font-weight:400; color:var(--muted); letter-spacing:0}
+
+  .layout{display:grid; grid-template-columns:1fr; gap:0; padding-block:0 80px}
+  @media (min-width:1080px){
+    .layout{grid-template-columns:224px minmax(0,1fr); gap:48px}
+    nav.toc{position:sticky; top:74px; align-self:start; padding-top:38px; max-height:calc(100vh - 90px); overflow:auto}
+  }
+  nav.toc{display:none}
+  @media (min-width:1080px){ nav.toc{display:block} }
+  nav.toc .toc-title{font-size:.74rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:0 0 10px}
+  nav.toc ol{list-style:none; margin:0; padding:0; font-size:.87rem}
+  nav.toc li{margin:0 0 2px}
+  nav.toc a{display:block; padding:5px 8px; border-left:2px solid transparent; color:var(--muted); border-radius:0 6px 6px 0}
+  nav.toc a:hover{color:var(--fg); background:var(--soft); text-decoration:none}
+  nav.toc a.active{color:var(--accent); border-left-color:var(--accent); background:var(--accent-soft); font-weight:600}
+
+  main{padding-top:34px; min-width:0}
+  section{margin:0 0 46px; scroll-margin-top:84px}
+  section > h3{font-size:1.32rem; margin:0 0 6px; letter-spacing:-.01em}
+  section > h3 .num{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:.45em}
+  section > p.sub{color:var(--muted); margin:0 0 18px; font-size:.95rem}
+
+  table{width:100%; border-collapse:collapse; margin:14px 0 8px; font-size:.92rem}
+  th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{font-size:.78rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); background:var(--soft); font-weight:600}
+  tbody tr:hover{background:var(--soft)}
+  td code{white-space:nowrap}
+  .table-scroll{overflow-x:auto; -webkit-overflow-scrolling:touch}
+
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin:16px 0}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:16px 18px}
+  .card h4{margin:0 0 6px; font-size:.97rem}
+  .card p{margin:0; font-size:.89rem; color:var(--muted); line-height:1.65}
+  .card .why{display:block; margin-top:8px; font-size:.84rem; color:var(--accent)}
+
+  .callout{border-left:3px solid var(--accent); background:var(--accent-soft); padding:12px 16px; border-radius:0 var(--radius) var(--radius) 0; margin:16px 0; font-size:.92rem}
+  .callout.warn{border-left-color:var(--warn-line); background:var(--warn-bg)}
+  .callout.ok{border-left-color:var(--ok-line); background:var(--ok-bg)}
+  .callout b{display:block; margin-bottom:2px; font-size:.86rem; letter-spacing:.02em}
+
+  .grade{display:inline-block; font-size:.68rem; padding:1px 7px; border-radius:999px; letter-spacing:.04em;
+     border:1px solid var(--line); color:var(--muted); background:var(--soft); white-space:nowrap}
+  .grade.official{border-color:#9db4d8; color:#3c5f8f; background:#eef2f8}
+  .grade.community{border-color:#c7b0d8; color:#6b4a86; background:#f5eef9}
+  .grade.infer{border-color:var(--warn-line); color:#8a6a1f; background:var(--warn-bg)}
+  @media (prefers-color-scheme: dark){
+    .grade.official{color:#a9c6ee; background:#1b2635; border-color:#33496b}
+    .grade.community{color:#cfb3e6; background:#251a2f; border-color:#4b3560}
+    .grade.infer{color:#e0c07a; background:#2a2416; border-color:#6b5722}
+  }
+
+  .codewrap{position:relative; margin:16px 0}
+  pre{background:var(--code-bg); color:var(--code-fg); padding:18px 18px; border-radius:var(--radius);
+      overflow-x:auto; font-size:.84rem; line-height:1.65; margin:0}
+  pre .cmt{color:#8a93a6}
+  pre .key{color:#9ecbff}
+  pre .str{color:#a8e6a3}
+  .copy-btn{position:absolute; top:10px; right:10px; font:inherit; font-size:.76rem;
+     background:#2c313d; color:#cfd4e0; border:1px solid #3c4250; border-radius:6px;
+     padding:4px 10px; cursor:pointer; opacity:.85}
+  .copy-btn:hover{opacity:1}
+  .copy-btn.done{background:#1f4d33; border-color:#2f6b48; color:#b7e6c9}
+
+  ul.clean{padding-left:1.15em; margin:12px 0}
+  ul.clean li{margin:5px 0}
+  ol.steps{padding-left:1.3em; margin:12px 0}
+  ol.steps li{margin:8px 0}
+
+  .checklist{list-style:none; padding:0; margin:14px 0}
+  .checklist li{display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px dashed var(--line)}
+  .checklist input{margin-top:6px; accent-color:var(--accent); width:16px; height:16px; flex:none}
+  .checklist label{font-size:.93rem; cursor:pointer}
+  .checklist .hint{display:block; color:var(--muted); font-size:.83rem}
+
+  details{border:1px solid var(--line); border-radius:var(--radius); padding:12px 16px; background:var(--card); margin:12px 0}
+  details summary{cursor:pointer; font-weight:600; font-size:.92rem}
+  details[open] summary{margin-bottom:10px}
+  details ol,details ul{font-size:.87rem; color:var(--muted)}
+  details code{overflow-wrap:anywhere}
+  details p,details li{overflow-wrap:break-word}
+
+  footer{border-top:1px solid var(--line); padding:26px 0 60px; color:var(--muted); font-size:.83rem}
+  footer p{margin:4px 0}
+
+  @media print{
+    header.top,nav.toc,.copy-btn{display:none!important}
+    body{font-size:11pt; background:#fff; color:#000}
+    .layout{display:block}
+    section{page-break-inside:avoid}
+    pre{background:#f4f4f4; color:#000; border:1px solid #ccc}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <span class="tag">LoRA 訓練</span>
+    <h1>MOSS-Image 人物 LoRA 訓練指南</h1>
+    <span class="date">2026-10-28</span>
+  </div>
+</header>
+
+<div class="wrap hero">
+  <h2>用 ai-toolkit 訓練 MOSS-Image 人物 LoRA</h2>
+  <p class="lead">
+    這份指南回答三個問題：資料要怎麼挑、caption 怎麼寫、job 要怎麼設。
+    每個數字都標了來源等級——<span class="grade official">官方</span>
+    <span class="grade community">社群實測</span> <span class="grade infer">推論</span>，
+    查不到的一律寫「查不到」，不用常識補。
+  </p>
+  <dl class="facts">
+    <div class="fact"><dt>訓練底模</dt><dd>Base<small>　出圖用 SFT</small></dd></div>
+    <div class="fact"><dt>rank / alpha</dt><dd>32 / 32</dd></div>
+    <div class="fact"><dt>學習率</dt><dd>1e-4<small>　constant</small></dd></div>
+    <div class="fact"><dt>步數</dt><dd>2500<small>　2000–3000</small></dd></div>
+    <div class="fact"><dt>資料量</dt><dd>30–60<small>　目標 40 張</small></dd></div>
+    <div class="fact"><dt>預覽 CFG</dt><dd>3.0<small>　不是 1.0</small></dd></div>
+  </dl>
+</div>
+
+<div class="wrap layout">
+  <nav class="toc" aria-label="目錄">
+    <p class="toc-title">目錄</p>
+    <ol>
+      <li><a href="#s1">1　先懂這顆模型</a></li>
+      <li><a href="#s2">2　資料集怎麼挑</a></li>
+      <li><a href="#s3">3　Caption 怎麼寫</a></li>
+      <li><a href="#s4">4　Job 參數設定</a></li>
+      <li><a href="#s5">5　記憶體級距</a></li>
+      <li><a href="#s6">6　訓練中怎麼看</a></li>
+      <li><a href="#s7">7　訓練後怎麼驗收</a></li>
+      <li><a href="#s8">8　常見問題</a></li>
+      <li><a href="#s9">9　開工前檢查清單</a></li>
+      <li><a href="#s10">10　資料來源</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+  <section id="s1">
+    <h3><span class="num">1</span>先懂這顆模型</h3>
+    <p class="sub">有五件事跟其他模型不一樣，照抄舊設定一定出錯。</p>
+
+    <div class="cards">
+      <div class="card">
+        <h4>① 它不是 CFG 蒸餾模型</h4>
+        <p>官方推論用 <b>CFG 3.0</b>（範圍 3–6）。</p>
+        <span class="why">設成 1.0 會變成單次 forward，連跳層指引都沒有，畫面會偏平。</span>
+      </div>
+      <div class="card">
+        <h4>② 邊長是 16 的倍數</h4>
+        <p>VAE 8× 下採樣再乘上 2×2 patch，有效 stride 16 px。</p>
+        <span class="why">不是 32。dataset 解析度與寬高都受此限制。</span>
+      </div>
+      <div class="card">
+        <h4>③ 文字編碼器凍結</h4>
+        <p>Qwen3.5-9B，走 chat template，上限 4096 token。</p>
+        <span class="why">caption 用「句子」比逗號 tag 串更貼近它看過的資料。</span>
+      </div>
+      <div class="card">
+        <h4>④ 負向分支跳過 block 22</h4>
+        <p>這是 SLG（跳層指引），LoRA 預設也要排除 <code>layers.22.</code>。</p>
+        <span class="why">目的是不破壞 CFG 的對比；放錯層級不會報錯，也不會生效。</span>
+      </div>
+      <div class="card">
+        <h4>⑤ 預設底模是 SFT，但人物要選 Base</h4>
+        <p>ai-toolkit 預設「MOSS-Image SFT」，但那只是預設值。</p>
+        <span class="why">Base 沒有做過 CFG 蒸餾，保留了完整訓練資訊，官方就是為社群訓 LoRA 而留的。</span>
+      </div>
+      <div class="card">
+        <h4>⑥ 它收斂得慢</h4>
+        <p>300 步就能認人，但 1500–1600 步都還在進步。</p>
+        <span class="why">所以不能只看最後一顆 checkpoint，每 250 步都要留。</span>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <b>最容易被抄錯的一格</b>
+      上一顆模型（Qwen-Image-2.1）的預覽 <code>guidance_scale</code> 是 <b>1.0</b>，因為它是 CFG 蒸餾模型。
+      MOSS 完全相反：<b>3.0</b>。把 1.0 搬過來，你會在完全沒有 CFG 的狀態下判斷 LoRA 好壞。
+    </div>
+  </section>
+
+  <section id="s2">
+    <h3><span class="num">2</span>資料集怎麼挑</h3>
+    <p class="sub">張數是上限，多樣性才是變數。</p>
+
+    <h4 style="margin:18px 0 4px;font-size:1rem">張數：30–60 張，目標 40</h4>
+    <p style="margin:0 0 10px;font-size:.93rem;color:var(--muted)">
+      可查證的人物案例是 56 張（1200 步、單卡約 65 分鐘）、62 張、53 張。
+      工具方另有「25 張有變化勝過 60 張近重複」的說法——兩者不衝突：
+      <b>重複的構圖與背景會被併進「這個人」的概念裡</b>，所以上限是張數，變數是多樣性。
+    </p>
+
+    <h4 style="margin:22px 0 4px;font-size:1rem">取景比例：半身 50 / 全身 30 / 特寫 20</h4>
+    <p style="margin:0 0 10px;font-size:.93rem;color:var(--muted)">
+      這是唯一有公開逐張統計的人物案例。要注意的是它<b>仍然有缺口</b>——作者自評「朝左的角度太少，側臉只有 4 張」。
+      同一作者前一次用「以頭肩照為主」的資料集，結果<b>訓練久了會把全身 prompt 拉回大頭照</b>。
+    </p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>維度</th><th>建議</th><th>為什麼</th></tr></thead>
+        <tbody>
+          <tr><td>取景</td><td>半身 50%、全身 30%、特寫 20%</td><td>缺全身，構圖會被鎖在胸部以上</td></tr>
+          <tr><td>角度</td><td>正面為主，<b>側臉至少 8–10 張</b></td><td>最常見的缺口，補齊後側臉 prompt 才聽話</td></tr>
+          <tr><td>服裝</td><td>4–6 套，平均分配</td><td>單一服裝佔比過高會有外洩風險</td></tr>
+          <tr><td>光源</td><td>室內外、順光逆光都要有</td><td>膚色被拉平通常是光源樣本太單一</td></tr>
+          <tr><td>背景</td><td>至少 5 種不同場景</td><td>同一面牆會變成「這個人」的一部分</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4 style="margin:22px 0 4px;font-size:1rem">解析度與裁切</h4>
+    <ul class="clean">
+      <li><b>不要自己裁切。</b>loader 會自動分桶縮放，而且<b>不會放大</b>——原圖太小就是浪費。</li>
+      <li>原圖長邊至少 <b>1024 px</b>，否則那張圖注定只能餵小 bucket，臉部細節會被抹掉。</li>
+      <li><code>square_crop</code> 保持 <b><code>false</code></b>。設成 true 會關掉分桶、每張中央裁成正方形。</li>
+      <li>面積以 1 MP 為目標（1024×1024、880×1168、832×1248 都在這個範圍）。</li>
+    </ul>
+
+    <div class="callout">
+      <b>一定要剔除的照片</b>
+      近重複（同一張換濾鏡）、模糊或壓縮痕跡重、多人合照、被遮住半張臉、臉太小（全身照裡只佔一小角）、
+      有浮水印或字幕、重美顏（皮膚已無紋理）、大量背影。
+    </div>
+  </section>
+
+  <section id="s3">
+    <h3><span class="num">3</span>Caption 怎麼寫</h3>
+    <p class="sub">格式沒有共識，但「內容」有——這是官方與社群唯一完全一致的地方。</p>
+
+    <div class="callout ok">
+      <b>唯一鐵律</b>
+      <b>不要描述觸發詞已經代表的外觀。</b>髮色、瞳色、臉型、身材、年齡，全部不要寫。
+      你要讓 LoRA 從圖片學這些，寫進 caption 等於用文字硬拉，會削弱學習效果。
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>要寫</th><th>不要寫</th></tr></thead>
+        <tbody>
+          <tr><td>場景（street、cafe、studio）</td><td>長相（臉型、眼睛大小、鼻子）</td></tr>
+          <tr><td>服裝（white shirt、denim jacket）</td><td>髮色、瞳色</td></tr>
+          <tr><td>光線（window light、backlit、overcast）</td><td>身材、身高、體型</td></tr>
+          <tr><td>角度與取景（profile、full body、close-up）</td><td>「beautiful」「attractive」這類評價詞</td></tr>
+          <tr><td>動作與表情（laughing、looking at camera）</td><td>畫質詞（8k、masterpiece、best quality）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4 style="margin:22px 0 4px;font-size:1rem">格式：用句子，不要用 tag 串</h4>
+    <p style="margin:0 0 8px;font-size:.93rem;color:var(--muted)">
+      MOSS 的官方文件同時接受自然語言、tag 串與 JSON layout，社群也確實有人用 tag 串成功。
+      但它的文字編碼器是走對話模板的 Qwen3.5-9B，<b>句子更貼近它訓練時看到的東西</b>。
+      tag 串不是錯，只是沒有理由優先選它。
+    </p>
+
+    <div class="codewrap">
+      <button class="copy-btn" data-copy="#cap-example">複製</button>
+      <pre id="cap-example"><span class="str">mychar, a woman standing in a bright cafe, wearing a white knit sweater, soft window light from the left, three-quarter view, shallow depth of field, candid expression</span></pre>
+    </div>
+
+    <ul class="clean">
+      <li><b>觸發詞放句首</b>，而且每張都要有。ai-toolkit 找不到時會自動補到最前面，但自己寫清楚比較不會出意外。</li>
+      <li>長度抓 <b>40–90 個英文詞</b>就夠。官方預訓練語料的中位數大約 75 token，人物 caption 不需要長篇。</li>
+      <li>用<b>英文</b>寫。模型看過的英文資料量最大。</li>
+      <li>一張圖一個場景描述，不要把所有可能都寫進去。</li>
+    </ul>
+  </section>
+
+  <section id="s4">
+    <h3><span class="num">4</span>Job 參數設定</h3>
+    <p class="sub">下面這份可以直接貼進 ai-toolkit 的 job 設定，改成你的路徑與觸發詞即可。</p>
+
+    <div class="callout warn">
+      <b>UI 預設有三個陷阱，開工前先改掉</b>
+      <ul style="margin:6px 0 0;padding-left:1.2em">
+        <li><code>resolution: [512, 768, 1024]</code> — 清單會<b>拆成三份資料集</b>，同一批圖跑三種解析度，步數預算等於 ×3。</li>
+        <li><code>caption_dropout_rate: 0.05</code> — 通用防過擬合值；人物小資料集建議改 <code>0</code>。</li>
+        <li>預設底模是 <b>SFT</b>，要自己切到「MOSS-Image Base」。</li>
+      </ul>
+    </div>
+
+    <div class="codewrap">
+      <button class="copy-btn" data-copy="#yaml-main">複製</button>
+      <pre id="yaml-main"><span class="key">job</span>: extension
+<span class="key">config</span>:
+  <span class="key">name</span>: moss_char_lora_v1        <span class="cmt"># 輸出資料夾與檔名；重訓請改這裡</span>
+  <span class="key">process</span>:
+    - <span class="key">type</span>: diffusion_trainer
+      <span class="key">training_folder</span>: output
+      <span class="key">device</span>: cuda:0
+      <span class="key">trigger_word</span>: <span class="str">"mychar"</span>
+
+      <span class="key">network</span>:
+        <span class="key">type</span>: lora
+        <span class="key">linear</span>: 32
+        <span class="key">linear_alpha</span>: 32
+        <span class="key">network_kwargs</span>:
+          <span class="key">ignore_if_contains</span>: [<span class="str">"layers.22."</span>]   <span class="cmt"># 不訓 CFG 負向分支跳過的層</span>
+
+      <span class="key">save</span>:
+        <span class="key">dtype</span>: bf16
+        <span class="key">save_every</span>: 250
+        <span class="key">max_step_saves_to_keep</span>: 6      <span class="cmt"># 預設 4；人物常要回頭撿早期 checkpoint</span>
+
+      <span class="key">datasets</span>:
+        - <span class="key">folder_path</span>: /workspace/dataset
+          <span class="key">caption_ext</span>: txt
+          <span class="key">caption_dropout_rate</span>: 0.0    <span class="cmt"># 人物小資料集建議 0</span>
+          <span class="key">buckets</span>: true
+          <span class="key">resolution</span>: [1024]             <span class="cmt"># 16GB 改 [768]；不要留 [512,768,1024]</span>
+          <span class="key">cache_latents_to_disk</span>: true
+          <span class="key">cache_text_embeddings</span>: true  <span class="cmt"># 關鍵：讓 9.75GB 的文字編碼器不必常駐</span>
+
+      <span class="key">train</span>:
+        <span class="key">batch_size</span>: 1
+        <span class="key">steps</span>: 2500                    <span class="cmt"># 20–30 張人物：2000–3000</span>
+        <span class="key">gradient_accumulation</span>: 1
+        <span class="key">train_unet</span>: true
+        <span class="key">train_text_encoder</span>: false      <span class="cmt"># 架構內已硬凍結</span>
+        <span class="key">gradient_checkpointing</span>: true
+        <span class="key">noise_scheduler</span>: flowmatch
+        <span class="key">timestep_type</span>: shift
+        <span class="key">optimizer</span>: adamw8bit
+        <span class="key">lr</span>: 0.0001
+        <span class="key">lr_scheduler</span>: constant
+        <span class="key">dtype</span>: bf16
+
+      <span class="key">model</span>:
+        <span class="key">name_or_path</span>: OpenMOSS-Team/MOSS-Image-Base
+        <span class="key">arch</span>: moss_image
+        <span class="key">quantize</span>: true
+        <span class="key">qtype</span>: convrot8
+        <span class="key">quantize_te</span>: true
+        <span class="key">qtype_te</span>: convrot8
+        <span class="key">low_vram</span>: true
+        <span class="key">layer_offloading</span>: false        <span class="cmt"># 16GB 改成 true</span>
+        <span class="key">model_kwargs</span>:
+          <span class="key">uncond_skip_layers</span>: [22]      <span class="cmt"># 官方 SLG</span>
+
+      <span class="key">sample</span>:
+        <span class="key">sampler</span>: flowmatch
+        <span class="key">sample_every</span>: 250
+        <span class="key">width</span>: 1024                    <span class="cmt"># 16GB 可降 768</span>
+        <span class="key">height</span>: 1024
+        <span class="key">guidance_scale</span>: 3.0            <span class="cmt"># 不是 1.0</span>
+        <span class="key">sample_steps</span>: 30               <span class="cmt"># 驗收時改 50</span>
+        <span class="key">seed</span>: 42
+        <span class="key">neg</span>: <span class="str">""</span></pre>
+    </div>
+
+    <p style="font-size:.88rem;color:var(--muted);margin-top:10px">
+      注意：真正決定 Base 還是 SFT 的是 <code>name_or_path</code>，不是 <code>arch</code> 的標籤。
+      <code>arch</code> 只用來挑 UI 預設，載入時標籤會被切掉。
+    </p>
+  </section>
+
+  <section id="s5">
+    <h3><span class="num">5</span>記憶體級距</h3>
+    <p class="sub">模型的靜態大小決定了下限：DiT 5.4GB（int8）＋ 文字編碼器 9.75GB（int8）。</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>顯卡</th><th>可行設定</th><th>結論</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>24GB</b><br><small>3090 / 4090</small></td>
+            <td>兩個 <code>convrot8</code>、解析度 1024、<code>layer_offloading: false</code></td>
+            <td>可行。不量化也能跑，但要 <code>cache_text_embeddings: true</code> 把 19GB 的編碼器移出 GPU</td>
+          </tr>
+          <tr>
+            <td><b>16GB</b><br><small>4080 / 5070 Ti / 5080</small></td>
+            <td>兩個 <code>convrot8</code>、<code>low_vram: true</code>、<code>layer_offloading: true</code>、解析度 <b>768</b></td>
+            <td>這條路線的實務下限</td>
+          </tr>
+          <tr>
+            <td><b>12GB</b><br><small>3060 / 4070</small></td>
+            <td>不建議</td>
+            <td>大概率 OOM；其他訓練器能用是靠 block swap，ai-toolkit 沒有這個機制</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <b>省 VRAM 的優先順序</b>
+      <code>cache_text_embeddings</code>（把 9.75GB 編碼器移出）→ 降 dataset 解析度 → 降預覽寬高 →
+      最後才開 <code>layer_offloading</code>（每層往返 CPU，速度掉最多）。
+      <br><br>
+      另外：<code>low_vram</code> 和 <code>layer_offloading</code> 是<b>兩個獨立開關</b>。
+      前者是把模型載到 CPU，不是「自動分批」。
+    </div>
+  </section>
+
+  <section id="s6">
+    <h3><span class="num">6</span>訓練中怎麼看</h3>
+    <p class="sub">預覽圖是草稿，不是成績單。</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>你會看到</th><th>意思</th><th>該做什麼</th></tr></thead>
+        <tbody>
+          <tr><td>300 步左右就認得出人</td><td>正常，身分很早進來</td><td>繼續跑，別急著停</td></tr>
+          <tr><td>1500 步還在變好</td><td>正常，MOSS 收斂慢</td><td>跑到 2000–3000 再比較</td></tr>
+          <tr><td>loss 一直在 0.4–0.65</td><td><b>正常</b>，這個 loss 看不出收斂</td><td>看圖，不要看曲線</td></tr>
+          <tr><td>預覽邊緣軟、文字糊</td><td>可能只是 30 步不夠</td><td>同一 seed 用 50 步重跑再判斷</td></tr>
+          <tr><td>每張都長一樣、皮膚像蠟</td><td>過擬合</td><td>退回更早的 checkpoint</td></tr>
+          <tr><td>不寫觸發詞也像本人</td><td>概念外洩</td><td>降 rank、減步數、加資料多樣性</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <b>最容易誤判的一件事</b>
+      預覽預設只跑 <b>30 步</b>，官方推論建議 <b>≥50 步</b>。
+      用 30 步的圖去判斷「這顆 LoRA 不夠好」，會低估它。驗收時一定要用 50 步重跑同一組 seed。
+    </div>
+  </section>
+
+  <section id="s7">
+    <h3><span class="num">7</span>訓練後怎麼驗收</h3>
+    <p class="sub">用固定的三路對照，一次只改一個變數。</p>
+
+    <ol class="steps">
+      <li><b>原模型</b>（不套 LoRA）跑同一組 prompt — 這是 baseline，用來扣掉模型本身的審美傾向。</li>
+      <li><b>套 LoRA、不寫觸發詞</b> — 檢查有沒有概念外洩。</li>
+      <li><b>套 LoRA、寫觸發詞</b> — 這才是你實際會用的情境。</li>
+    </ol>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>驗收項目</th><th>怎麼看</th></tr></thead>
+        <tbody>
+          <tr><td>相似度</td><td>正面、側面、四分之三角度各一張；與本人照片並排</td></tr>
+          <tr><td>體態</td><td>全身照對照肩寬、腰線、髖寬、腿長比例——注意模型本身就會把人修得好看一些</td></tr>
+          <tr><td>泛化</td><td>測一組<b>訓練集沒有的構圖</b>（例如資料集全是室內，就測戶外全身）</td></tr>
+          <tr><td>文字能力</td><td>畫面裡放一段文字，看有沒有糊掉或拼錯</td></tr>
+          <tr><td>外洩</td><td>第 2 路若也像本人，就是外洩</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="font-size:.9rem;color:var(--muted)">
+      選 checkpoint 的方式：把 250 步間隔的每一顆都跑同一組 prompt、同一個 seed，
+      挑「相似度夠、又還沒開始僵化」的那一顆。<b>不要直接拿最後一顆。</b>
+    </p>
+  </section>
+
+  <section id="s8">
+    <h3><span class="num">8</span>常見問題</h3>
+
+    <details>
+      <summary>訓練到一半 OOM，但看不出是哪一階段</summary>
+      <p>載入、訓練、取樣三個階段的峰值不同，要分開處理：</p>
+      <ul>
+        <li><b>載入時</b> → 開量化 + <code>low_vram</code></li>
+        <li><b>訓練時</b> → 降 dataset 解析度（1024 → 768）</li>
+        <li><b>取樣時</b> → 降 <code>sample.width/height</code>，不必動 dataset</li>
+      </ul>
+    </details>
+
+    <details>
+      <summary>同一份設定再跑一次，馬上就結束了</summary>
+      <p>它會從 <code>output/&lt;name&gt;/</code> 最新的 checkpoint 續訓。改 <code>config.name</code>，或把舊輸出目錄搬走。</p>
+    </details>
+
+    <details>
+      <summary>LoRA 在 ComfyUI 裡完全沒效果，console 一直印 lora key not loaded</summary>
+      <p>舊版 ComfyUI（0.42.5）的 MOSS 分支只認 <code>diffusion_model.</code> 前綴的 key。
+      更新到 master 即可（PR #17296 已修）。ai-toolkit 產出的檔案本來就帶前綴，不受影響。</p>
+    </details>
+
+    <details>
+      <summary>為什麼不能用 Turbo / DMD 版本當預覽基準？</summary>
+      <p>那是蒸餾過的另一條路線，步數與 CFG 都不同（4–8 步、CFG 1）。用它看到的畫面，
+      不能用來判斷你正在訓的這顆 LoRA。預覽與驗收一律用 base 模型、30／50 步、CFG 3。</p>
+    </details>
+
+    <details>
+      <summary>訓練完的 LoRA 要放哪一顆底模出圖？</summary>
+      <p>用 <b>SFT</b>。訓練在 Base、出圖在 SFT 是目前的共識做法。</p>
+    </details>
+
+    <details>
+      <summary>為什麼我的圖有淡淡的垂直條紋？</summary>
+      <p>那是 SFT 模型本身的特性，不是你的訓練造成的。可以在推論端疊 DeBand LoRA，或直接用 Base。</p>
+    </details>
+  </section>
+
+  <section id="s9">
+    <h3><span class="num">9</span>開工前檢查清單</h3>
+    <p class="sub">勾完再按開始，可以省掉一輪重訓。</p>
+
+    <ul class="checklist">
+      <li><input type="checkbox" id="c1"><label for="c1">資料 30–60 張，且<b>沒有近重複</b><span class="hint">同一張換濾鏡、連拍同姿勢都算重複</span></label></li>
+      <li><input type="checkbox" id="c2"><label for="c2">全身照至少佔 30%，側臉至少 8 張<span class="hint">最常見的兩個缺口</span></label></li>
+      <li><input type="checkbox" id="c3"><label for="c3">原圖長邊都 ≥1024 px<span class="hint">太小的圖只能餵小 bucket，細節會被抹掉</span></label></li>
+      <li><input type="checkbox" id="c4"><label for="c4">每張圖都有同名 <code>.txt</code>，且<b>沒描述長相</b><span class="hint">髮色、瞳色、臉型、身材都不寫</span></label></li>
+      <li><input type="checkbox" id="c5"><label for="c5">觸發詞是不常見的 token，且每張 caption 都有<span class="hint">常見名字會和模型既有概念打架</span></label></li>
+      <li><input type="checkbox" id="c6"><label for="c6">底模選 <b>Base</b>，不是 SFT<span class="hint">ai-toolkit 預設是 SFT，要自己切</span></label></li>
+      <li><input type="checkbox" id="c7"><label for="c7"><code>resolution</code> 只留一個值<span class="hint">留三個等於三份資料集，步數預算 ×3</span></label></li>
+      <li><input type="checkbox" id="c8"><label for="c8"><code>caption_dropout_rate</code> 設 0<span class="hint">人物小資料集不需要 dropout</span></label></li>
+      <li><input type="checkbox" id="c9"><label for="c9"><code>caption_dropout_rate</code>、<code>square_crop</code>、<code>uncond_skip_layers</code> 都確認過<span class="hint">false / false / [22]</span></label></li>
+      <li><input type="checkbox" id="c10"><label for="c10">預覽 CFG 是 <b>3.0</b>，不是 1.0<span class="hint">從別的模型複製設定時最容易錯的一格</span></label></li>
+      <li><input type="checkbox" id="c11"><label for="c11">存檔間隔 250、保留 6 個<span class="hint">人物常常要回頭撿早期 checkpoint</span></label></li>
+      <li><input type="checkbox" id="c12"><label for="c12">準備好三路驗收的 prompt 與 seed<span class="hint">原模型 / 無觸發詞 / 有觸發詞</span></label></li>
+    </ul>
+  </section>
+
+  <section id="s10">
+    <h3><span class="num">10</span>資料來源</h3>
+    <p class="sub">2026-10-28 查詢。標記方式：官方文件與原始碼優先，其次為可重現的社群實測，最後才是推論。</p>
+
+    <details>
+      <summary>官方（OpenMOSS）</summary>
+      <ul>
+        <li>MOSS-Image repo（Apache-2.0、架構、釋出日）：<a href="https://github.com/OpenMOSS/MOSS-Image">github.com/OpenMOSS/MOSS-Image</a></li>
+        <li>USERGUIDE（推論參數、post-training、caption 建議）：<a href="https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE.md">USERGUIDE.md</a></li>
+        <li>技術報告 arXiv:2610.23374（架構、解析度上限、caption 長度分布）：<a href="https://arxiv.org/abs/2610.23374">arxiv.org/abs/2610.23374</a></li>
+        <li>Model card（取樣預設、16 倍數）：<a href="https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base">MOSS-Image-Base</a></li>
+      </ul>
+    </details>
+
+    <details>
+      <summary>ai-toolkit 原始碼</summary>
+      <ul>
+        <li><code>extensions_built_in/diffusion_models/moss_image/</code>（arch、bucket 整除度、LoRA 目標）</li>
+        <li><code>extensions_built_in/diffusion_models/ui.tsx</code>（UI 預設：CFG 3、30 步、block 22）</li>
+        <li><code>toolkit/prompt_utils.py</code>（觸發詞自動插入位置）</li>
+      </ul>
+      <p>版本 <code>b69b983</code>（0.13.39，2026-10-27）。</p>
+    </details>
+
+    <details>
+      <summary>社群實測</summary>
+      <ul>
+        <li>人物 LoRA 完整案例（56 張、1200 步、外洩對照）：<a href="https://github.com/limin112/Lora">limin112/Lora</a></li>
+        <li>四個角色 LoRA（rank 32、推論 50 步 CFG 3）：<a href="https://huggingface.co/tachiyumi/MOSS-Image-LoRAs">tachiyumi/MOSS-Image-LoRAs</a></li>
+        <li>第三方訓練器文件（1 MP 最佳、block 22 取捨、收斂慢）：<a href="https://github.com/shootthesound/Fizgig/blob/master/docs/MOSS_IMAGE.md">Fizgig</a></li>
+        <li>RunComfy ai-toolkit 設定全表：<a href="https://www.runcomfy.com/trainer/ai-toolkit/moss-image-base-lora-training">runcomfy.com</a></li>
+      </ul>
+    </details>
+
+    <div class="callout warn" style="margin-top:20px">
+      <b>這份指南的已知缺口</b>
+      真人（非名人）的 MOSS 人物 LoRA 公開實測<b>查不到</b>，現有案例都是虛構角色與廠商內部測試。
+      量化對相似度的影響、12GB 能否跑完 1024²、block 22 該不該訓，也都還沒有公開 A/B 對照。
+      這些地方請把它當「合理起點」，不是「最佳解」。
+    </div>
+  </section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p><b>MOSS-Image 人物 LoRA 訓練指南</b>　·　建立 2026-10-28</p>
+    <p>依 ai-toolkit 0.13.39（<code>b69b983</code>）與 OpenMOSS MOSS-Image（2026-10-16 釋出）整理。模型與工具迭代快，動手前請重新確認版本。</p>
+    <p>訓練真人影像需要當事人同意；模型授權（Apache-2.0）不涵蓋肖像權與個資。</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  // 複製按鈕
+  document.querySelectorAll('.copy-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var sel = btn.getAttribute('data-copy');
+      var el = document.querySelector(sel);
+      if(!el) return;
+      var text = el.innerText;
+      var done = function(){
+        var old = btn.textContent;
+        btn.textContent = '已複製';
+        btn.classList.add('done');
+        setTimeout(function(){ btn.textContent = old; btn.classList.remove('done'); }, 1600);
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done).catch(function(){ fallback(text, done); });
+      } else {
+        fallback(text, done);
+      }
+    });
+  });
+  function fallback(text, done){
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){}
+    document.body.removeChild(ta);
+  }
+
+  // 目錄高亮
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+  var sections = links.map(function(a){ return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+  if('IntersectionObserver' in window && sections.length){
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(en.isIntersecting){
+          links.forEach(function(l){ l.classList.remove('active'); });
+          var active = links.filter(function(l){ return l.getAttribute('href') === '#' + en.target.id; })[0];
+          if(active) active.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+    sections.forEach(function(s){ io.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>
