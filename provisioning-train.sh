@@ -19,6 +19,12 @@
 #   AI_TOOLKIT_DIR  AI_TOOLKIT_REF  AI_TOOLKIT_REPO  HF_ROOT  DATASET_DIR
 #   TRAIN_NAME  TRIGGER_WORD  TRAIN_RESOLUTION  TRAIN_STEPS  TRAIN_RANK  TRAIN_LR
 #   TRAIN_GRAD_CP  TRAIN_LAYER_OFFLOAD  TORCH_INDEX_URL  AI_TOOLKIT_UI_PORT
+#   TRAIN_DISABLE_SAMPLING  TRAIN_PERF_LOG_EVERY  TRAIN_LOG_EVERY
+#   AITK_REGISTER_UI_JOB  AITK_REGISTER_UI_JOB_URL  AITK_REGISTER_WAIT  REGISTER_TOOL
+#
+# 註：本腳本由 vast.ai 模板以 raw URL 取得，執行時才知道 repo 內容；因此腳本會
+# 用「同一個 repo 的 raw URL」再取得 UI 註冊工具（scripts/register_ui_job.py）。
+# 兩者都必須已 push 到 GitHub，佈建才拿得到最新版。
 set -o pipefail
 
 log()  { echo "[provision-train] $*"; }
@@ -43,6 +49,17 @@ TRAIN_GRAD_CP="${TRAIN_GRAD_CP:-true}"             # → train.gradient_checkpoi
 TRAIN_LAYER_OFFLOAD="${TRAIN_LAYER_OFFLOAD:-true}"  # → model.layer_offloading（含兩個 *_percent）
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 TORCH_PKGS="${TORCH_PKGS:-torch==2.13.0 torchvision==0.28.0 torchaudio==2.11.0}"
+
+# 網頁可見性相關（見 docs/qwen21-lora-training.md「在網頁上跑訓練」）：
+TRAIN_DISABLE_SAMPLING="${TRAIN_DISABLE_SAMPLING:-false}"    # true=完全不產生預覽圖（16GB 卡可開）
+TRAIN_PERF_LOG_EVERY="${TRAIN_PERF_LOG_EVERY:-1}"            # >0 才會寫 speed_string（網頁速度欄）
+TRAIN_LOG_EVERY="${TRAIN_LOG_EVERY:-1}"                      # logging.log_every（loss 圖取樣間隔）
+
+# 佈建完成後把起手 YAML 註冊成 UI 任務（讓使用者可在網頁按 ▶ 開始並監看）：
+AITK_REGISTER_UI_JOB="${AITK_REGISTER_UI_JOB:-1}"            # 設 0 可完全關閉
+AITK_REGISTER_UI_JOB_URL="${AITK_REGISTER_UI_JOB_URL:-https://raw.githubusercontent.com/j7708git/vastai-rent/main/scripts/register_ui_job.py}"
+AITK_REGISTER_WAIT="${AITK_REGISTER_WAIT:-300}"              # 等 UI HTTP 就緒的上限秒數
+REGISTER_TOOL="${REGISTER_TOOL:-/workspace/register_ui_job.py}"
 
 YAML_PATH="$AI_TOOLKIT_DIR/config/train_qwen21_character_lora.yaml"
 TRAIN_RUNNER="$AI_TOOLKIT_DIR/train.sh"
@@ -202,6 +219,13 @@ config:
     - type: sd_trainer
       training_folder: output
       device: cuda:0
+      # 讓網頁看得到「速度」與「loss 曲線」（ai-toolkit 預設兩者都不寫）：
+      #   performance_log_every > 0 → 週期性寫入 speed_string（否則網頁速度欄恆為 '?'）
+      #   logging.use_ui_logger = true → 寫出 <job>/loss_log.db（網頁 loss 圖的來源）
+      performance_log_every: ${TRAIN_PERF_LOG_EVERY}
+      logging:
+        use_ui_logger: true
+        log_every: ${TRAIN_LOG_EVERY}
       # trigger_word：caption 內寫 [trigger] 會被替換成這個詞；若 caption 尚未含觸發詞，
       # 也會自動補上（已含則不重複加）。
       # 註：現行 ai-toolkit（0.13.25 / commit f7a1fb9）在寫入 text-embedding 快取「之前」就已
@@ -250,7 +274,10 @@ config:
         lr: ${TRAIN_LR}
         dtype: bf16
         skip_first_sample: true
-        disable_sampling: true
+        # disable_sampling: true 會完全不產生預覽圖（網頁就看不到圖）。
+        # 預設 false（開啟取樣，每 sample_every 步出一張預覽圖）；16GB 卡想省時間／VRAM
+        # 可設 TRAIN_DISABLE_SAMPLING=true 關掉。
+        disable_sampling: ${TRAIN_DISABLE_SAMPLING}
       model:
         # 權重來源為 Comfy-Org 的 int8 量化 repack；設定檔／processor 來自官方 repo。
         name_or_path: ${COMFY_REPO}
@@ -352,6 +379,48 @@ else
   log "warning: 找不到 /opt/supervisor-scripts，改用 nohup 啟動 UI"
   ( cd "$UI_DIR" && HF_HOME="$HF_ROOT" HF_HUB_CACHE="$HF_ROOT/hub" \
       nohup npm run start >/var/log/ai-toolkit-ui.log 2>&1 & ) || true
+fi
+
+# ------------------------------------------------------- 註冊成 UI 任務（防禦性）
+# 讓起手 YAML 以「ai-toolkit UI 原生任務」的形式出現在網頁 Jobs 清單：使用者點進任務
+# 詳細頁按 ▶ 即開始訓練，並可在網頁看狀態／步數／速度／loss／預覽圖。
+# 全程防禦性：UI 沒起來、下載不到工具、或註冊失敗，都只記 warning，**不影響佈建結果**
+# （訓練仍可用 ./train.sh）。可用 AITK_REGISTER_UI_JOB=0 完全關閉。
+if [ "$AITK_REGISTER_UI_JOB" = "0" ]; then
+  log "略過 UI 任務註冊（AITK_REGISTER_UI_JOB=0）"
+else
+  # 取得註冊工具：與本腳本相同的 raw URL 模式（repo 需已 push）
+  if [ ! -s "$REGISTER_TOOL" ]; then
+    log "下載 UI 註冊工具：$AITK_REGISTER_UI_JOB_URL"
+    wget -qO "$REGISTER_TOOL" "$AITK_REGISTER_UI_JOB_URL" || rm -f "$REGISTER_TOOL"
+    # 404 頁面等非腳本內容會有 HTML；確認看起來是 Python 再留著
+    if [ -s "$REGISTER_TOOL" ] && ! head -1 "$REGISTER_TOOL" | grep -q '^#!.*python'; then
+      log "warning: 下載到的內容不像 Python 腳本，丟棄"
+      rm -f "$REGISTER_TOOL"
+    fi
+  fi
+  if [ ! -s "$REGISTER_TOOL" ]; then
+    log "warning: 取不到 $REGISTER_TOOL，略過 UI 任務註冊（訓練仍可用 ./train.sh）"
+  else
+    log "等 UI ($AI_TOOLKIT_UI_PORT) 就緒後註冊任務（上限 ${AITK_REGISTER_WAIT}s）..."
+    ui_up=0
+    waited=0
+    while [ "$waited" -lt "$AITK_REGISTER_WAIT" ]; do
+      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+             "http://127.0.0.1:$AI_TOOLKIT_UI_PORT/api/jobs" 2>/dev/null || true)
+      [ "$code" = "200" ] && { ui_up=1; break; }
+      sleep 5
+      waited=$((waited + 5))
+    done
+    if [ "$ui_up" != "1" ]; then
+      log "warning: UI 在 ${AITK_REGISTER_WAIT}s 內未就緒，略過 UI 任務註冊（訓練仍可用 ./train.sh）"
+    elif "$VENV/bin/python" "$REGISTER_TOOL" --yaml "$YAML_PATH" --name "$TRAIN_NAME" \
+           --api-url "http://127.0.0.1:$AI_TOOLKIT_UI_PORT"; then
+      log "已註冊 UI 任務：$TRAIN_NAME（網頁 Jobs 可見；點進詳細頁按 ▶ 開始訓練）"
+    else
+      log "warning: UI 任務註冊失敗（退出碼 $?），訓練仍可用 ./train.sh"
+    fi
+  fi
 fi
 
 log "佈建完成。UI 應在 http://127.0.0.1:$AI_TOOLKIT_UI_PORT（經 Instance Portal / SSH 埠轉發對外）"

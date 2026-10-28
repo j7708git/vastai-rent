@@ -17,11 +17,16 @@ python3 scripts/rent_gpu.py --mode train
 python3 scripts/rent_gpu.py --mode train --dry-run
 
 # 2) 上傳訓練集（見下方「資料集格式」與「上傳方式」）
-# 3) SSH 進去開始訓練
+# 3) 連上訓練 UI，點進任務詳細頁按 ▶ 開始訓練（見「在網頁上跑訓練」）
+#    （命令列替代方案：SSH 進去 ./train.sh）
 # 4) 下載訓好的 LoRA，放回 ComfyUI 使用
 # 5) 用完刪除實例，停止計費
 python3 scripts/rent_gpu.py --destroy <實例ID>
 ```
+
+佈建完成後，起手任務**已經註冊好、狀態是 `stopped`**，你在網頁按 ▶ 就會開始——
+細節（怎麼看狀態／步數／速度／loss／預覽圖、怎麼 Stop）見下方
+[在網頁上跑訓練](#在網頁上跑訓練ui-原生任務)。
 
 訓練模式的預設篩選條件與推理模式不同：
 
@@ -100,11 +105,107 @@ scp -P <PORT> -r <你的訓練集>/* root@<HOST>:/workspace/dataset/
 
    然後在本機瀏覽器開 <http://localhost:8675>。
 
+   這台訓練機的常用內部埠（本機埠可自行更換）：
+
+   | 服務 | 容器內埠 | 備註 |
+   | --- | --- | --- |
+   | Instance Portal | 11111 | Portal 後端，無驗證；1111 是 Caddy 入口，需 basic auth／token |
+   | AI Toolkit UI | 8675 | 訓練介面本體，免登入 |
+   | Jupyter | 8080 | 只提供 HTTPS，需帶 `?token=` |
+   | TensorBoard | 16006 | |
+   | Syncthing | 18384 | |
+
+   > 本機 8080 常已被其他服務佔用（例如 Caddy），`-L 8080:...` 會噴
+   > `Address already in use`。改用 18080、18675 之類的埠即可，例如：
+   > `-L 18080:127.0.0.1:11111 -L 18675:127.0.0.1:8675`。
+
 2. **Instance Portal tunnel**：vast.ai 的 Instance Portal 會替 UI 建立
    Cloudflare tunnel 連結，可從實例卡片的 Open／tunnel 資訊取得
    （回報的 URL 有時導向 Portal 本身，非 UI 本體；以 SSH 埠轉發為準）。
 
 UI 本身不需一直開著，訓練啟動後關掉瀏覽器不影響訓練；它只用來啟動／停止／監看 job。
+
+## 在網頁上跑訓練（UI 原生任務）
+
+佈建完成後，起手 YAML 會被自動註冊成 ai-toolkit UI 的**原生訓練任務**，而且**預設只註冊、
+不啟動**——任務會出現在網頁 Jobs 清單、狀態停在 `stopped`，由你自己按 ▶ 開始。
+
+> 註冊是**防禦性**的：UI 還沒起來、或註冊失敗，佈建仍會成功（只記 warning），訓練照樣可以
+> 用命令列 `./train.sh` 跑。可用環境變數 `AITK_REGISTER_UI_JOB=0` 關閉自動註冊。
+
+### 流程
+
+1. 連上 UI（`http://localhost:8675`，或實例的 `<tunnel-url>`）。
+2. **Jobs 清單**看得到任務，名稱＝`TRAIN_NAME`（預設 `qwen21_character_lora`），狀態 `stopped`。
+3. **點進任務詳細頁**（`/jobs/<jobID>`），按 ▶ → 開始訓練。
+   * **關鍵**：只有**任務詳細頁**的 ▶ 會「排入佇列 ＋ 啟動佇列」，也就是一鍵開始；
+     **Jobs 清單頁**的 ▶ 只會排入佇列，還要另外啟動佇列才會跑。**請點進詳細頁按 ▶。**
+4. 訓練中看得到 **狀態、步數（`step`／`total_steps`）、速度、loss 曲線**；跑到
+   `sample_every` 的倍數步時，**Samples** 會出現預覽圖
+   （讀 `<training_folder>/<job.name>/samples/`，即機器上的
+   `/workspace/ai-toolkit/output/<任務名>/samples/`）。
+5. 網頁按鈕：**Stop Job**（停止，程序會結束）、**Save Next Step**（下個存檔點立刻存）、
+   **Sample Next Step**（下個取樣點立刻出圖）；另有 **Mark as Stopped**（程序已不在時把狀態改回
+   停止，避免卡在 running）。
+
+> ⚠️ 網頁的 **Delete** 會**遞迴刪除該任務的輸出目錄**（`output/<任務名>/`，含訓好的 LoRA）。
+> 要保留成果就別按 Delete，改用下載／上傳到 Hugging Face 的方式保存（見
+> [lora-hf-publish.md](lora-hf-publish.md)）。
+
+### 讓「速度」與「loss 圖」有資料
+
+ai-toolkit 預設**不寫**這兩樣，網頁速度欄會顯示 `?`、loss 圖會是空的。佈建產生的起手 YAML
+已經帶好以下欄位：
+
+| YAML 欄位 | 作用 | 起手值 |
+| --- | --- | --- |
+| `process[0].performance_log_every` | `> 0` 才會週期性寫入 `speed_string`（速度欄） | `1` |
+| `process[0].logging.use_ui_logger` | `true` 才會寫出 `<job>/loss_log.db`（loss 圖來源） | `true` |
+| `process[0].logging.log_every` | loss 取樣間隔（步） | `1` |
+| `sample.sample_every` | 每幾步出一張預覽圖（需 `train.disable_sampling: false`） | `250` |
+
+（`train.disable_sampling` 預設已改為 `false`；想省 VRAM／時間可設 `TRAIN_DISABLE_SAMPLING=true`
+關掉取樣，但這樣網頁就不會有預覽圖。）
+
+### 把「既有 YAML」註冊成 UI 任務（`scripts/register_ui_job.py`）
+
+佈建已自動註冊一次；要另外註冊別的 YAML（例如你自己改過的 `config/xxx.yaml`）時：
+
+```bash
+# 方式一：在實例上執行（YAML 與 UI 都在同一台）
+ssh -i <你的私鑰> -p <PORT> root@<HOST> \
+  '/workspace/ai-toolkit/venv/bin/python /workspace/register_ui_job.py \
+     --yaml /workspace/ai-toolkit/config/xxx.yaml'
+```
+
+```bash
+# 方式二：在本機透過 SSH 執行（工具會自動上傳自己到實例的 /tmp 再跑；
+#         --yaml 是實例上的路徑）
+python3 scripts/register_ui_job.py --ssh root@<HOST> \
+  --ssh-args "-i ~/.ssh/id_ed25519 -p <PORT>" \
+  --yaml /workspace/ai-toolkit/config/xxx.yaml
+```
+
+常用參數：
+
+| 參數 | 說明 |
+| --- | --- |
+| `--yaml PATH` | 必填。ai-toolkit 訓練 YAML（SSH 模式下為實例上的路徑） |
+| `--name NAME` | 任務名稱（預設取 YAML 的 `config.name`；會**一併覆寫 `config.name`**，確保輸出與預覽圖目錄 `<training_folder>/<name>/` 一致） |
+| `--gpu-ids IDS` | 綁定的 GPU 群組字串（預設 `0`） |
+| `--api-url URL` | UI 位址（預設 `http://127.0.0.1:8675`） |
+| `--dry-run` | 只印出將送出的 `job_config` JSON，不發任何請求 |
+| `--start` | 註冊後立刻排入佇列並啟動佇列（自動啟動情境） |
+| `--update` | 同名任務已存在時就地更新設定（預設會明確報錯，並附既有 job id 與提示） |
+
+退出碼：**0** 成功、**1** 失敗（UI 連不上、YAML 有問題、名稱重複未加 `--update`…）、
+**2** 部分完成／警告（例如 `--start` 後未在時限內變成 `queued`／`running`）。
+
+工具做的事：把 YAML 轉成 UI 的 `job_config`（外層 `{job, config, meta}`，
+`process[0].type` 改成 **`diffusion_trainer`**、補上 `sqlite_db_path`），再 `POST /api/jobs`
+建任務列。`diffusion_trainer` ＋ `sqlite_db_path` ＋ UI 啟動時注入的 `AITK_JOB_ID`
+三者齊備，訓練端才會把狀態／步數／速度／loss 回報到網頁——這是「用 `sd_trainer` 從命令列跑」
+時網頁看不到任務的原因。
 
 ## 起手訓練設定（YAML）
 
@@ -139,7 +240,10 @@ ssh -i <你的私鑰> -p <PORT> root@<HOST> \
 | `train.lr` | `0.0001` | 學習率 |
 | `train.noise_scheduler` / `timestep_type` | `flowmatch` / `shift` | 2.1 的 flow-matching 設定 |
 | `train.gradient_checkpointing` | `true` | 省 VRAM，略慢。由 `TRAIN_GRAD_CP` 環境變數控制（預設 `true`）；與 `layer_offloading` 併用是 issue #1054 的組合，見「訓後自檢與步數」 |
-| `train.disable_sampling` | `true` | 訓練中不出樣本圖（省 VRAM／時間） |
+| `train.disable_sampling` | `false` | 訓練中**會**出樣本圖（網頁預覽圖來源）。設 `true` 可省 VRAM／時間，但網頁就沒有預覽圖；由 `TRAIN_DISABLE_SAMPLING` 環境變數控制 |
+| `train.skip_first_sample` | `true` | 跳過訓練前 baseline 樣本（順帶避開 issue #1059） |
+| `process[0].performance_log_every` | `1` | `>0` 才會寫速度（`speed_string`）；`0` 會讓網頁速度欄恆為 `?` |
+| `process[0].logging.use_ui_logger` / `log_every` | `true` / `1` | 寫出 `<job>/loss_log.db`（網頁 loss 圖來源）；`false` 時 loss 圖永遠是空的 |
 | `model.arch` | `qwen_image_2` | 2.1 專用架構；別與初代 Qwen-Image 混用 |
 | `model.name_or_path` | `Comfy-Org/Qwen-Image-2.1` | 權重來源（int8 量化 repack） |
 | `model.extras_name_or_path` | `Qwen/Qwen-Image-2.1` | 設定檔／processor 來源 |
@@ -156,6 +260,13 @@ ssh -i <你的私鑰> -p <PORT> root@<HOST> \
 | --- | --- | --- | --- |
 | `TRAIN_GRAD_CP` | `true` | `train.gradient_checkpointing` | `false` 可關掉 checkpointing（省時間但 **VRAM 需求上升**） |
 | `TRAIN_LAYER_OFFLOAD` | `true` | `model.layer_offloading`（含兩個 `*_percent`） | `false` 可整組關掉 CPU 層卸載（VRAM 需求上升） |
+| `TRAIN_DISABLE_SAMPLING` | `false` | `train.disable_sampling` | `true` 完全不產生預覽圖（省 VRAM／時間，但網頁看不到圖） |
+| `TRAIN_PERF_LOG_EVERY` | `1` | `process[0].performance_log_every` | 速度（`speed_string`）更新間隔；`0` 關閉 |
+| `TRAIN_LOG_EVERY` | `1` | `process[0].logging.log_every` | loss 圖取樣間隔 |
+| `AITK_REGISTER_UI_JOB` | `1` | （佈建行為） | 設 `0` 可關閉「佈建完成後自動把起手 YAML 註冊成 UI 任務」 |
+
+「速度」與「loss 圖」的欄位細節與網頁操作，見上方
+[在網頁上跑訓練](#在網頁上跑訓練ui-原生任務)。
 
 改完 YAML 後可另存不同檔名（放在 `config/` 下），再用
 `./train.sh config/<你的檔名>.yaml` 執行指定的設定；不帶參數時預設跑
@@ -201,6 +312,10 @@ python3 scripts/check_lora.py <下載的 LoRA.safetensors>
   1750 之後有機會出現皮膚顆粒化等過擬合現象。
 - **每 250 步比較**：起手設定每 250 步存一次（`save_every: 250`）。比較時用**同一組
   prompt、seed、解析度、CFG**（2.1 固定 CFG=1），另外跑一個「無關 prompt」檢查有沒有外洩。
+- 要填的 prompt 可直接複製 [Sample Prompts 範本](lora-sample-prompts.md)：含身分驗證、
+  角度壓力測試、泳裝身材檢查、風格彈性與無觸發詞對照組，每組都是獨立可複製的區塊。
+  該範本另附 **MOSS-Image 的取樣參數差異表**；換模型時請看那張表，不要照抄本頁的
+  `guidance_scale` 與解析度倍數。
 
 ## 訓完：把 LoRA 放回 ComfyUI 使用
 
