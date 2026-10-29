@@ -88,7 +88,7 @@
   .callout{border-left:3px solid var(--accent); background:var(--accent-soft); padding:12px 16px; border-radius:0 var(--radius) var(--radius) 0; margin:16px 0; font-size:.92rem}
   .callout.warn{border-left-color:var(--warn-line); background:var(--warn-bg)}
   .callout.ok{border-left-color:var(--ok-line); background:var(--ok-bg)}
-  .callout b{display:block; margin-bottom:2px; font-size:.86rem; letter-spacing:.02em}
+  .callout > b:first-of-type{display:block; margin-bottom:2px; font-size:.86rem; letter-spacing:.02em}
 
   .grade{display:inline-block; font-size:.68rem; padding:1px 7px; border-radius:999px; letter-spacing:.04em;
      border:1px solid var(--line); color:var(--muted); background:var(--soft); white-space:nowrap}
@@ -134,6 +134,10 @@
   footer{border-top:1px solid var(--line); padding:26px 0 60px; color:var(--muted); font-size:.83rem}
   footer p{margin:4px 0}
 
+  @media (max-width:520px){
+    th,td{padding:7px 8px; font-size:.86rem}
+  }
+
   @media print{
     header.top,nav.toc,.copy-btn{display:none!important}
     body{font-size:11pt; background:#fff; color:#000}
@@ -160,15 +164,17 @@
     每個數字都標了來源等級——<span class="grade official">官方</span>
     <span class="grade community">社群實測</span> <span class="grade infer">推論</span>，
     查不到的一律寫「查不到」，不用常識補。
+    內容分成兩條路線：<b>官方 Base 路線</b>（官方建議、本專案未驗證）與
+    <b>本專案 SFT 路線</b>（四顆 LoRA 實測、部署在 SFT）。兩條不要混用。
   </p>
   <dl class="facts">
-    <div class="fact"><dt>訓練底模</dt><dd>Base<small>　出圖用 SFT</small></dd></div>
+    <div class="fact"><dt>訓練底模</dt><dd>Base 或 SFT<small>　本專案四顆用 SFT</small></dd></div>
     <div class="fact"><dt>rank / alpha</dt><dd>32 / 32</dd></div>
     <div class="fact"><dt>學習率</dt><dd>1e-4<small>　constant</small></dd></div>
-    <div class="fact"><dt>步數</dt><dd>2500<small>　2000–3000</small></dd></div>
-    <div class="fact"><dt>資料量</dt><dd>25–40<small>　低於 15 張不要開始</small></dd></div>
+    <div class="fact"><dt>步數</dt><dd>1500–2500<small>　依張數換算曝光次數</small></dd></div>
+    <div class="fact"><dt>資料量</dt><dd>15–40<small>　7–15 可做，但要壓曝光</small></dd></div>
     <div class="fact"><dt>16GB 實測</dt><dd>1024<small>　峰值約 11GB</small></dd></div>
-    <div class="fact"><dt>預覽 CFG</dt><dd>3.0<small>　不是 1.0</small></dd></div>
+    <div class="fact"><dt>預覽 CFG</dt><dd>3.0 / 1.0<small>　30–50 步 / 4 步蒸餾</small></dd></div>
   </dl>
 </div>
 
@@ -197,9 +203,9 @@
 
     <div class="cards">
       <div class="card">
-        <h4>① 它不是 CFG 蒸餾模型</h4>
-        <p>官方推論用 <b>CFG 3.0</b>（範圍 3–6）。</p>
-        <span class="why">設成 1.0 會變成單次 forward，連跳層指引都沒有，畫面會偏平。</span>
+        <h4>① Base 不是 CFG 蒸餾模型</h4>
+        <p>官方對 Base／SFT 的預設推論都是 <b>CFG 3.0</b>（範圍 3–6）。</p>
+        <span class="why">設成 1.0 會變成單次 forward，連跳層指引都沒有，畫面會偏平；但 4 步蒸餾路線是例外，見 §8。</span>
       </div>
       <div class="card">
         <h4>② 邊長是 16 的倍數</h4>
@@ -217,21 +223,26 @@
         <span class="why">目的是不破壞 CFG 的對比；放錯層級不會報錯，也不會生效。</span>
       </div>
       <div class="card">
-        <h4>⑤ 預設底模是 SFT，但人物要選 Base</h4>
-        <p>ai-toolkit 預設「MOSS-Image SFT」，但那只是預設值。</p>
-        <span class="why">Base 沒有做過 CFG 蒸餾，保留了完整訓練資訊，官方就是為社群訓 LoRA 而留的。</span>
+        <h4>⑤ 官方建議 Base；本專案走 SFT</h4>
+        <p>ai-toolkit 預設「MOSS-Image SFT」；官方則把 Base 保留給社群訓 LoRA。</p>
+        <span class="why">本專案四顆 LoRA 都在 SFT 上訓，因為部署棧是 SFT + 4 步蒸餾 LoRA。兩條路線不要混用；跨底模可移植性沒有 A/B。</span>
       </div>
       <div class="card">
         <h4>⑥ 它收斂得慢</h4>
-        <p>300 步就能認人，但 1500–1600 步都還在進步。</p>
-        <span class="why">所以不能只看最後一顆 checkpoint，每 250 步都要留。</span>
+        <p>300 步就能認人，25–40 張的資料集到 1500–1600 步都還在進步。</p>
+        <span class="why">所以不能只看最後一顆 checkpoint；每 100–250 步都要留，小資料集用 100。</span>
       </div>
     </div>
 
     <div class="callout warn">
       <b>最容易被抄錯的一格</b>
-      上一顆模型（Qwen-Image-2.1）的預覽 <code>guidance_scale</code> 是 <b>1.0</b>，因為它是 CFG 蒸餾模型。
-      MOSS 完全相反：<b>3.0</b>。把 1.0 搬過來，你會在完全沒有 CFG 的狀態下判斷 LoRA 好壞。
+      <p style="margin:6px 0 0">
+        上一顆模型（Qwen-Image-2.1）的預覽 <code>guidance_scale</code> 是 <b>1.0</b>，因為它是 CFG 蒸餾模型。
+        MOSS 的 30–50 步路線相反：<b>3.0</b>。把 1.0 搬過來，你會在完全沒有 CFG 的狀態下判斷 LoRA 好壞。
+      </p>
+      <p style="margin:6px 0 0">
+        但如果你用 <b>4 步蒸餾 LoRA</b> 做部署預覽，CFG 要回到 <b>1.0</b>；兩者是不同的檢查，不要互相取代。
+      </p>
     </div>
   </section>
 
@@ -239,12 +250,15 @@
     <h3><span class="num">2</span>資料集怎麼挑</h3>
     <p class="sub">張數是上限，多樣性才是變數。</p>
 
-    <h4 style="margin:18px 0 4px;font-size:1rem">張數：25–40 張起跑；低於 15 張不要開始</h4>
+    <h4 style="margin:18px 0 4px;font-size:1rem">張數：25–40 是保守區間；7–15 張可做，但要壓曝光</h4>
     <p style="margin:0 0 10px;font-size:.93rem;color:var(--muted)">
       可查的人物案例是 56 張（1200 步、單卡約 65 分鐘）、工具商自述的 62 張與 53 張。
       注意 56 張那個案例被不同報告重複引用，不能當成多個獨立證據。
       <b>25–40 是低信心的營運區間，不是實驗最佳值</b>；重複的構圖與背景會被併進「這個人」的概念裡，
       所以張數是上限，多樣性才是變數。
+      本專案另外有三個資料點：15 張（v1）與 12 張（jo_stillcrazy）都乾淨；7 張（leedahye）在 900 步可用、
+      1050 步出現半透明鬼影。所以低於 15 張不是不能做，而是<b>曝光次數要壓在 100–130</b>，
+      而且泛化會明顯受限。
     </p>
 
     <h4 style="margin:22px 0 4px;font-size:1rem">取景比例：用覆蓋率檢查，不要照抄單一個案</h4>
@@ -331,12 +345,12 @@
     <p class="sub">下面這份可以直接貼進 ai-toolkit 的 job 設定，改成你的路徑與觸發詞即可。</p>
 
     <div class="callout warn">
-      <b>UI 預設有四個陷阱，開工前先改掉</b>
+      <b>UI 預設有四個要確認的地方</b>
       <ul style="margin:6px 0 0;padding-left:1.2em">
-        <li><code>resolution: [512, 768, 1024]</code> — 清單會<b>拆成三份資料集</b>，同一批圖跑三種解析度，步數預算等於 ×3。</li>
+        <li><code>resolution: [512, 768, 1024]</code> — 清單會<b>拆成三份資料集</b>，固定步數下是三份各分到 1/3 更新。它是「多尺度＋速度」的取捨，不是錯；受控比較時才用單一 <code>[1024]</code>。</li>
         <li><code>caption_dropout_rate: 0.05</code> — 通用防過擬合值；人物小資料集建議改 <code>0</code>。</li>
-        <li>預設底模是 <b>SFT</b>，要自己切到「MOSS-Image Base」。</li>
-        <li>存檔預設只保留 <b>4</b> 個 checkpoint；人物建議 <b>6–8</b>。</li>
+        <li>預設底模是 <b>SFT</b>；官方建議 Base，本專案則直接用 SFT（見 §1 ⑤）。</li>
+        <li>存檔預設只保留 <b>4</b> 個 checkpoint；人物建議 <b>6–8</b>，短跑用 <b>100 步／10 顆</b>。</li>
       </ul>
     </div>
 
@@ -360,8 +374,8 @@
 
       <span class="key">save</span>:
         <span class="key">dtype</span>: bf16
-        <span class="key">save_every</span>: 250
-        <span class="key">max_step_saves_to_keep</span>: 6      <span class="cmt"># UI 預設 4；人物建議 6–8</span>
+        <span class="key">save_every</span>: 250           <span class="cmt"># 長跑用；短跑（&lt;2000 步）改 100</span>
+        <span class="key">max_step_saves_to_keep</span>: 6      <span class="cmt"># UI 預設 4；人物建議 6–8；短跑改 10</span>
 
       <span class="key">datasets</span>:
         - <span class="key">folder_path</span>: /workspace/dataset
@@ -369,12 +383,12 @@
           <span class="key">caption_dropout_rate</span>: 0.0    <span class="cmt"># 人物小資料集建議 0</span>
           <span class="key">buckets</span>: true
           <span class="key">square_crop</span>: false            <span class="cmt"># 不要開；會跳過分桶、可能放大</span>
-          <span class="key">resolution</span>: [1024]             <span class="cmt"># 16GB 也實測可跑；不要留 [512,768,1024]</span>
+          <span class="key">resolution</span>: [1024]             <span class="cmt"># 受控比較用；混合清單是速度取捨，不是錯</span>
           <span class="key">cache_latents_to_disk</span>: true
 
       <span class="key">train</span>:
         <span class="key">batch_size</span>: 1
-        <span class="key">steps</span>: 2500                    <span class="cmt"># 25–40 張人物：2000–3000</span>
+        <span class="key">steps</span>: 2500                    <span class="cmt"># 官方 Base 版；本專案 SFT 版 1050–3000（見下表）</span>
         <span class="key">gradient_accumulation</span>: 1
         <span class="key">train_unet</span>: true
         <span class="key">train_text_encoder</span>: false      <span class="cmt"># 架構內已硬凍結</span>
@@ -402,10 +416,10 @@
 
       <span class="key">sample</span>:
         <span class="key">sampler</span>: flowmatch
-        <span class="key">sample_every</span>: 250
+        <span class="key">sample_every</span>: 250           <span class="cmt"># 長跑用；短跑（&lt;2000 步）改 100</span>
         <span class="key">width</span>: 1024                    <span class="cmt"># 16GB 實測 1024 訓練可行；取樣 OOM 再降</span>
         <span class="key">height</span>: 1024
-        <span class="key">guidance_scale</span>: 3.0            <span class="cmt"># 不是 1.0</span>
+        <span class="key">guidance_scale</span>: 3.0            <span class="cmt"># 30–50 步路線；4 步蒸餾用 1.0</span>
         <span class="key">sample_steps</span>: 30               <span class="cmt"># 驗收時改 50</span>
         <span class="key">seed</span>: 42
         <span class="key">neg</span>: <span class="str">""</span></pre>
@@ -416,6 +430,28 @@
       <code>arch</code> 只用來挑 UI 預設，載入時標籤會被切掉。
       另外 <code>sample.sampler</code> 寫了不生效，MOSS 管線實際用 Euler；真正要調的是 steps、CFG、shift。
     </p>
+
+    <div class="callout ok">
+      <b>本專案 SFT 版的差異（四顆 LoRA 實際設定）</b>
+      <div class="table-scroll" style="margin-top:8px">
+        <table>
+          <thead><tr><th>欄位</th><th>官方 Base 版</th><th>本專案 SFT 版</th></tr></thead>
+          <tbody>
+            <tr><td><code>name_or_path</code></td><td><code>.../MOSS-Image-Base</code></td><td><code>.../MOSS-Image-SFT</code></td></tr>
+            <tr><td><code>steps</code></td><td>2500</td><td>1050–3000（依張數換算曝光）</td></tr>
+            <tr><td><code>save_every</code> / keep</td><td>250 / 6–8</td><td><b>100 / 10</b>（短跑才不會漏掉最佳 checkpoint）</td></tr>
+            <tr><td><code>resolution</code></td><td><code>[1024]</code></td><td>v1.1 用 <code>[1024]</code>；v1／jo／lee 用 <code>[512,768,1024]</code></td></tr>
+            <tr><td><code>sample</code></td><td>30 步、CFG 3</td><td><b>4 步、CFG 1</b> + <code>inference_lora_path</code>（部署閘門）</td></tr>
+            <tr><td><code>network_kwargs</code></td><td><code>ignore_if_contains: ["layers.22."]</code></td><td>手寫 YAML 未設；四顆仍可用，要照 UI 預設可補上</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin:8px 0 0;font-size:.88rem">
+        <code>cache_text_embeddings</code> 可以放 <code>train</code> 層（切換全部資料集）或
+        <code>datasets[]</code> 層（逐資料集）；本專案的 YAML 放在 dataset 層，兩者都合法。
+        v1.1 用 dataset 層 <code>true</code>，訓練正常；沒有 A/B。
+      </p>
+    </div>
   </section>
 
   <section id="s5">
@@ -476,9 +512,27 @@
           <tr><td>預覽邊緣軟、文字糊</td><td>可能只是 30 步不夠</td><td>同一 seed 用 50 步重跑再判斷</td></tr>
           <tr><td>每張都長一樣、皮膚像蠟</td><td>過擬合</td><td>退回更早的 checkpoint</td></tr>
           <tr><td>不寫觸發詞也像本人</td><td>概念外洩</td><td>降 rank、減步數、加資料多樣性</td></tr>
+          <tr><td>7–15 張的小資料集，約 900–1200 步就開始僵化</td><td>資料少，曝光次數太高</td><td>用 100 步間隔存檔，回頭撿 900 左右；4 步預覽看鬼影</td></tr>
         </tbody>
       </table>
     </div>
+
+    <h4 style="margin:22px 0 8px;font-size:1rem">本專案四顆 LoRA 實測</h4>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>資料集</th><th>張數</th><th>步數（曝光）</th><th>解析度</th><th>結果</th></tr></thead>
+        <tbody>
+          <tr><td><code>mibin1215</code> v1</td><td>15</td><td>3000（200）</td><td>混合</td><td>好；目前最佳</td></tr>
+          <tr><td><code>mibin1215</code> v1.1</td><td>15</td><td>1200（80）</td><td>1024</td><td>偏弱（<code>|B|</code> 1.56 vs 2.52）</td></tr>
+          <tr><td><code>jo_stillcrazy</code></td><td>12</td><td>1800（150）</td><td>混合</td><td>好；最終版即最佳</td></tr>
+          <tr><td><code>leedahye</code></td><td>7</td><td>1050（150）</td><td>混合</td><td>900 好；1000 步起鬼影</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.88rem;color:var(--muted);margin-top:8px">
+      曝光次數＝步數 ÷ 張數（混合清單是總計，每個解析度各約 1/3）。本專案的經驗值：80 次偏弱、150–200 次較好；
+      7 張的小資料集超過約 130 次開始出現鬼影。這是單一專案觀察，不是通則。
+    </p>
 
     <div class="callout">
       <b>時間估算（16GB 單次實測，非官方數據）</b>
@@ -501,7 +555,7 @@
 
   <section id="s7">
     <h3><span class="num">7</span>訓練後怎麼驗收</h3>
-    <p class="sub">用固定的三路對照，一次只改一個變數。</p>
+    <p class="sub">用固定的三路對照＋4 步部署閘門，一次只改一個變數。</p>
 
     <ol class="steps">
       <li><b>原模型</b>（不套 LoRA）跑同一組 prompt — 這是 baseline，用來扣掉模型本身的審美傾向。</li>
@@ -543,9 +597,17 @@ a horse galloping across a field at sunset</pre>
       </table>
     </div>
 
+    <div class="callout warn">
+      <b>第四路：4 步部署閘門（本專案必做）</b>
+      上面三路是 50 步、CFG 3 的品質驗收。實際部署是 <b>4 步蒸餾 LoRA + CFG 1.0</b>，
+      所以要再加一條：同一組 prompt、同一 seed，接 4 步蒸餾 LoRA 跑 4 步。
+      leedahye 的鬼影只有在這條路看得到；50 步 CFG 3 可能完全正常。
+    </div>
+
     <p style="font-size:.9rem;color:var(--muted)">
-      選 checkpoint 的方式：把 250 步間隔的每一顆都跑同一組 prompt、同一個 seed，
+      選 checkpoint 的方式：短跑用 <b>100 步</b>、長跑用 250 步間隔，把每一顆都跑同一組 prompt、同一個 seed，
       挑「相似度夠、又還沒開始僵化」的那一顆。<b>不要直接拿最後一顆。</b>
+      leedahye 的最佳版本是 900 步，但 250 步間隔只會留下 1000 步與最終版，根本撿不到 900——這是為什麼小資料集要用 100。
     </p>
   </section>
 
@@ -576,12 +638,17 @@ a horse galloping across a field at sunset</pre>
     <details>
       <summary>為什麼不能用 Turbo / DMD 版本當預覽基準？</summary>
       <p>那是蒸餾過的另一條路線，步數與 CFG 都不同（4–8 步、CFG 1）。用它看到的畫面，
-      不能用來判斷你正在訓的這顆 LoRA。預覽與驗收一律用 base 模型、30／50 步、CFG 3。</p>
+      不能用來判斷訓練中的 LoRA 進步了沒有；訓練中的預覽仍用未蒸餾模型、30 步、CFG 3。</p>
+      <p><b>但部署前一定要跑一次 4 步蒸餾。</b>它不是「預覽基準」，而是「部署閘門」：
+      品質驗收看 50 步 CFG3，能不能用看 4 步 CFG1。兩者都過才上傳。</p>
     </details>
 
     <details>
       <summary>訓練完的 LoRA 要放哪一顆底模出圖？</summary>
-      <p>用 <b>SFT</b>。訓練在 Base、出圖在 SFT 是目前的共識做法。</p>
+      <p><b>官方路線</b>：在 Base 上訓、在 SFT 上出圖，這是社群常見做法；但官方 USERGUIDE 沒有這樣說，
+      本專案也沒有 Base→SFT 的 A/B，所以標成「未驗證」。</p>
+      <p><b>本專案路線</b>：直接在 SFT 上訓、在 SFT 上出圖，四顆 LoRA 都這樣做，
+      而且部署棧是 SFT + 4 步蒸餾 LoRA，不需要跨底模。若你要跟本專案一致，就用 SFT。</p>
     </details>
 
     <details>
@@ -601,11 +668,14 @@ a horse galloping across a field at sunset</pre>
       <p>ai-toolkit 的 UI 新 job 預設是 <b>4</b>；手寫 YAML 完全不填時，核心 <code>SaveConfig</code> 預設是 <b>5</b>。
       人物訓練建議調高到 <b>6–8</b>，因為最好的 checkpoint 不一定是最後一顆。留 6 顆等於只保留最後 6 顆（2500 步時是 1250–2500），
       更早的會被覆蓋；要回頭撿早期就設 8，或手動把想要的複製到別處。</p>
+      <p><b>短跑（&lt;2000 步）請用 <code>save_every: 100</code>、<code>max_step_saves_to_keep: 10</code>。</b>
+      1050 步、250 步間隔只會留下 250/500/750/1000/1050；本專案 leedahye 的最佳版本是 900 步，根本不會存在。</p>
     </details>
 
     <details>
       <summary>為什麼 YAML 的 cache_text_embeddings 是 false？</summary>
-      <p>ai-toolkit 的預設就是 <code>false</code>；MOSS 是否完整支援這條快取路徑、開啟後 loss 是否正常，本專案<b>沒有驗證</b>。
+      <p>ai-toolkit 的預設就是 <code>false</code>；本專案 v1.1 曾在 <code>datasets[]</code> 層開 <code>true</code>，
+      1200 步訓練與取樣正常，但<b>沒有 A/B</b>，不能證明加速或等價。
       只有在實際 OOM、且你願意檢查 loss 與輸出時才試 <code>true</code>。不要為了省 VRAM 先動一個沒驗過的東西。</p>
     </details>
 
@@ -615,7 +685,7 @@ a horse galloping across a field at sunset</pre>
       公式是 <code>W += cat(B_q, B_k, B_v) @ A</code>，fp32 計算、bf16 寫回；已實測載入合併檔角色一致。
       4 步預覽則用 <code>scripts/patch_moss_inference_lora.py</code> 加上 forward hook，設定
       <code>sample_steps: 4</code>、<code>guidance_scale: 1.0</code>。這是看最終推論設定的樣子，不是訓練中的 checkpoint 比較；
-      訓練中的預覽仍用 base 模型 30 步，驗收用 50 步 CFG 3。</p>
+      訓練中的預覽仍用未蒸餾模型 30 步，驗收用 50 步 CFG 3，<b>部署前再過一次 4 步 CFG 1；兩者都過才上傳</b>。</p>
     </details>
   </section>
 
@@ -624,20 +694,21 @@ a horse galloping across a field at sunset</pre>
     <p class="sub">勾完再按開始，可以省掉一輪重訓。</p>
 
     <ul class="checklist">
-      <li><input type="checkbox" id="c1"><label for="c1">資料 25–40 張，且<b>沒有近重複</b><span class="hint">低於 15 張先不要開始；同一張換濾鏡、連拍同姿勢都算重複</span></label></li>
+      <li><input type="checkbox" id="c1"><label for="c1">資料 15–40 張，且<b>沒有近重複</b><span class="hint">7–15 張可做，但曝光次數壓在 100–130；低於 7 張不建議</span></label></li>
       <li><input type="checkbox" id="c2"><label for="c2">特寫、半身、全身、背面都有；左右側臉各至少 3 張<span class="hint">最常見的兩個缺口</span></label></li>
       <li><input type="checkbox" id="c3"><label for="c3">原圖長邊都 ≥1024 px<span class="hint">太小的圖只能餵小 bucket，細節會被抹掉</span></label></li>
       <li><input type="checkbox" id="c4"><label for="c4">每張圖都有同名 <code>.txt</code>，且<b>沒描述長相</b><span class="hint">髮色、瞳色、臉型、身材都不寫</span></label></li>
       <li><input type="checkbox" id="c5"><label for="c5">觸發詞是不常見的 token，且每張 caption 都有<span class="hint">常見名字會和模型既有概念打架</span></label></li>
-      <li><input type="checkbox" id="c6"><label for="c6">底模選 <b>Base</b>，不是 SFT<span class="hint">ai-toolkit 預設是 SFT，要自己切</span></label></li>
-      <li><input type="checkbox" id="c7"><label for="c7"><code>resolution</code> 只留 <code>[1024]</code><span class="hint">16GB 也實測可跑；留三個等於三份資料集，步數預算 ×3</span></label></li>
+      <li><input type="checkbox" id="c6"><label for="c6">底模依路線選：<b>官方 Base</b> 或 <b>本專案 SFT</b>，不要混用<span class="hint">本專案四顆都在 SFT 上訓；跨底模沒有 A/B</span></label></li>
+      <li><input type="checkbox" id="c7"><label for="c7"><code>resolution</code> 受控比較用 <code>[1024]</code><span class="hint">趕時間可用混合；三份各分到 1/3 步數，曝光次數要重算</span></label></li>
       <li><input type="checkbox" id="c8"><label for="c8"><code>caption_dropout_rate</code> 設 0<span class="hint">另做一組 0.05 對照，其餘條件不變</span></label></li>
       <li><input type="checkbox" id="c9"><label for="c9"><code>caption_dropout_rate</code>、<code>square_crop</code>、<code>uncond_skip_layers</code>、<code>ignore_if_contains</code> 都確認過<span class="hint">0.0 / false / [22] / ["layers.22."]</span></label></li>
-      <li><input type="checkbox" id="c10"><label for="c10">預覽 CFG 是 <b>3.0</b>，不是 1.0<span class="hint">從別的模型複製設定時最容易錯的一格</span></label></li>
-      <li><input type="checkbox" id="c11"><label for="c11">存檔間隔 250、保留 6–8 個<span class="hint">UI 預設 4；人物常常要回頭撿早期 checkpoint</span></label></li>
+      <li><input type="checkbox" id="c10"><label for="c10">30–50 步預覽 CFG 是 <b>3.0</b>；4 步蒸餾是 <b>1.0</b><span class="hint">兩條路線不同，不要互相取代</span></label></li>
+      <li><input type="checkbox" id="c11"><label for="c11">短跑存檔間隔 <b>100</b>、保留 <b>10</b>；長跑 250／6–8<span class="hint">250 間隔會漏掉 900 這種最佳 checkpoint</span></label></li>
       <li><input type="checkbox" id="c12"><label for="c12">準備好三路驗收的 prompt 與 seed<span class="hint">原模型 / 無觸發詞 / 有觸發詞</span></label></li>
-      <li><input type="checkbox" id="c13"><label for="c13"><code>cache_text_embeddings</code> 保持 <code>false</code><span class="hint">要開先確認 loss 正常；這是未驗證選項</span></label></li>
-      <li><input type="checkbox" id="c14"><label for="c14"><code>arch</code> 與 <code>name_or_path</code> 都正確<span class="hint">arch: moss_image；name_or_path 指向 MOSS-Image-Base</span></label></li>
+      <li><input type="checkbox" id="c13"><label for="c13"><code>cache_text_embeddings</code> 預設 <code>false</code>；要開先確認 loss 正常<span class="hint">本專案 v1.1 用 dataset 層 true 訓練正常，但沒有 A/B</span></label></li>
+      <li><input type="checkbox" id="c14"><label for="c14"><code>arch</code> 與 <code>name_or_path</code> 都正確<span class="hint">arch: moss_image；name_or_path 要與路線一致（Base 或 SFT）</span></label></li>
+      <li><input type="checkbox" id="c15"><label for="c15">4 步部署閘門已跑過<span class="hint">4 步蒸餾 + CFG 1；50 步正常不代表 4 步正常</span></label></li>
     </ul>
   </section>
 
@@ -695,8 +766,8 @@ a horse galloping across a field at sunset</pre>
 
 <footer>
   <div class="wrap">
-    <p><b>MOSS-Image 人物 LoRA 訓練指南</b>　·　建立 2026-10-28，更新 2026-10-29</p>
-    <p>依 ai-toolkit 0.13.39（<code>b69b983</code>）與 OpenMOSS MOSS-Image（2026-10-16 釋出）整理。模型與工具迭代快，動手前請重新確認版本。</p>
+    <p><b>MOSS-Image 人物 LoRA 訓練指南</b>　·　建立 2026-10-28，更新 2026-10-29（雙軌與小資料集修訂）</p>
+    <p>依 ai-toolkit 0.13.39（<code>b69b983</code>）與 OpenMOSS MOSS-Image（2026-10-16 釋出）整理；本專案訓練機實際跑 <code>609f3e5</code>（2026-10-23）。模型與工具迭代快，動手前請重新確認版本。</p>
     <p>訓練真人影像需要當事人同意；模型授權（Apache-2.0）不涵蓋肖像權與個資。</p>
   </div>
 </footer>
