@@ -1,21 +1,23 @@
 # 把自訓 LoRA 上傳到 Hugging Face（私有收藏）
 
-訓練完成的 Qwen-Image-2.1 LoRA 可以放上 Hugging Face 的**私有** model repo 保存，
-之後換機器或重灌時直接下載，不必重訓。以下是可重複的標準流程。
+訓練完成的 LoRA（目前有 Qwen-Image-2.1 與 Krea-2-Turbo）可以放上 Hugging Face 的
+**私有** model repo 保存，之後換機器或重灌時直接下載，不必重訓。以下是可重複的標準流程。
 
 > 前置：已安裝 `hf` CLI（`pip install -U huggingface_hub`）並登入（`hf auth login`）。
 > 檢查登入狀態：`hf auth whoami`。
 
-## 1. 建立私有收藏 repo（每個帳號一次即可）
+## 1. 建立私有收藏 repo（每個底模一個）
 
-repo 名稱要能看出**是自己訓練的、以及底模是 Qwen-Image-2.1**。本專案採用：
+**一個底模一個 repo，不要混。** repo 名稱要能看出是自己訓練的、以及底模版本。
+目前使用：
 
-```
-my-qwen-image-2.1-loras
-```
+| 底模 | repo 名稱 |
+| --- | --- |
+| Qwen-Image-2.1 | `my-qwen-image-2.1-loras` |
+| Krea-2-Turbo | `my-krea-2-loras` |
 
 ```bash
-hf repos create <你的帳號>/my-qwen-image-2.1-loras --type model --private
+hf repos create <你的帳號>/my-krea-2-loras --type model --private
 ```
 
 **務必加 `--private`**。人物類 LoRA 含真人特徵，不應公開。
@@ -50,13 +52,28 @@ curl -s -H "Authorization: Bearer $(cat ~/.cache/huggingface/token)" \
     └── README.md                  # 這支 LoRA 的說明卡
 ```
 
+Krea-2-Turbo 的收藏則是一個訓練 job 一個資料夾，`.safetensors` 檔名沿用訓練輸出、
+不改名（方便對回訓練紀錄）：
+
+```
+my-krea-2-loras/
+├── README.md
+├── akaonikou_v2/
+├── akaonikou_v2_1/
+├── LeeDahye_lora_v1/
+├── lily_lora_v1/
+├── lily_lora_v2/
+└── mibin1215_lora_v1/
+```
+
 **不要上傳**：訓練集影像、預覽圖（含真人影像）、任何憑證、本機絕對路徑。
 預覽圖留在本機或訓練機即可。
 
-模型卡（README）建議欄位：`base_model: Qwen/Qwen-Image-2.1`、
-`license: other` ＋ `license_name: qwen-research-license`、tags
-（`lora`、`text-to-image`、`qwen-image-2.1`、`ai-toolkit`）、觸發詞、rank、步數、
-解析度、最佳化設定、訓練工具與 commit、使用方式（ComfyUI 節點與參數）、已知限制。
+模型卡（README）建議欄位：`base_model`（Qwen 用 `Qwen/Qwen-Image-2.1`，Krea 用
+`krea/Krea-2-Turbo`）、`license: other`（Qwen 另加 `license_name:
+qwen-research-license`）、tags（`lora`、`text-to-image`、底模系列、`ai-toolkit`）、
+觸發詞、rank、步數、解析度、最佳化設定、訓練工具與 commit、使用方式（ComfyUI 節點與
+參數）、已知限制。
 
 ## 3. 上傳
 
@@ -83,16 +100,39 @@ hf upload <你的帳號>/my-qwen-image-2.1-loras <本機暫存>/hf-upload \
   若權杖不想放在租來的機器上，就退回本機上傳，忍受較慢的速度。
 - 上傳完成後再跑第 1 節的驗證指令，確認檔案清單與大小（`?blobs=true` 會回報 size）。
 
-## 4. 之後要新增 LoRA
+### 從舊 repo 合併（server-side copy）
 
-把新的子資料夾放進同一個暫存目錄，更新索引 `README.md`，再重跑第 3 節即可
-（同一 repo 會多一個 commit）。
+同一個帳號、同一個 storage region 的 repo 之間，可以用 `hf repos cp` 直接複製，
+不必下載再上傳（本專案實測：218 MB 的檔約 4 秒，sha256 不變）：
+
+```bash
+hf repos cp \
+  hf://<帳號>/<舊repo>/<舊路徑>.safetensors \
+  hf://<帳號>/my-krea-2-loras/<新資料夾>/<檔名>.safetensors
+```
+
+複製後用 `?blobs=true` 回報的 `lfs.sha256` 逐一比對；全部一致才處理舊 repo。
+
+## 4. 之後要新增或退役 LoRA
+
+**新增**：把新的 job 子資料夾放進同一個暫存目錄，更新索引 `README.md`，再重跑第 3 節
+即可（同一 repo 會多一個 commit）。
+
+**退役舊 repo**：先確認新 repo 的 sha256 全部對上，再改名保留 30 天：
+
+```bash
+hf repos move <帳號>/<舊repo> <帳號>/archive-<舊repo> --type model
+```
+
+在 archive repo 的 README 最上面標註合併日與預定刪除日；30 天後再 `hf repos delete`。
+改名後舊網址會失效，新 repo 才是正式來源。
 
 ## 注意事項
 
 - **授權**：Qwen-Image-2.1 為 Qwen Research License（非商用）；以它訓練的 LoRA 屬衍生
   作品，散布時須標示「Built with Qwen」，且不得以「Qwen」作為主名稱。
+  Krea-2-Turbo 為 gated／客製授權（`license: other`，非商業），以它訓練的 LoRA 同受約束。
 - **肖像權**：人物 LoRA 即使放在私有 repo，若要給他人使用或改為公開，須先確認
   被攝者同意，以及該模型的商用限制。
-- **命名**：建議 repo 名稱固定含「自己訓練」與底模版本（本專案採 `my-qwen-image-2.1-loras`）；
-  新增其他底模時另開對應名稱的 repo，不要混在同一處。
+- **命名**：repo 名稱固定含「自己訓練」與底模版本（`my-qwen-image-2.1-loras`、
+  `my-krea-2-loras`）；新增其他底模時另開對應名稱的 repo，不要混在同一處。
