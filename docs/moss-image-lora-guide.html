@@ -149,7 +149,7 @@
   <div class="wrap top-inner">
     <span class="tag">LoRA 訓練</span>
     <h1>MOSS-Image 人物 LoRA 訓練指南</h1>
-    <span class="date">2026-10-28</span>
+    <span class="date">2026-10-29</span>
   </div>
 </header>
 
@@ -166,7 +166,8 @@
     <div class="fact"><dt>rank / alpha</dt><dd>32 / 32</dd></div>
     <div class="fact"><dt>學習率</dt><dd>1e-4<small>　constant</small></dd></div>
     <div class="fact"><dt>步數</dt><dd>2500<small>　2000–3000</small></dd></div>
-    <div class="fact"><dt>資料量</dt><dd>30–60<small>　目標 40 張</small></dd></div>
+    <div class="fact"><dt>資料量</dt><dd>25–40<small>　低於 15 張不要開始</small></dd></div>
+    <div class="fact"><dt>16GB 實測</dt><dd>1024<small>　峰值約 11GB</small></dd></div>
     <div class="fact"><dt>預覽 CFG</dt><dd>3.0<small>　不是 1.0</small></dd></div>
   </dl>
 </div>
@@ -192,7 +193,7 @@
 
   <section id="s1">
     <h3><span class="num">1</span>先懂這顆模型</h3>
-    <p class="sub">有五件事跟其他模型不一樣，照抄舊設定一定出錯。</p>
+    <p class="sub">有六件事跟其他模型不一樣，照抄舊設定一定出錯。</p>
 
     <div class="cards">
       <div class="card">
@@ -208,7 +209,7 @@
       <div class="card">
         <h4>③ 文字編碼器凍結</h4>
         <p>Qwen3.5-9B，走 chat template，上限 4096 token。</p>
-        <span class="why">caption 用「句子」比逗號 tag 串更貼近它看過的資料。</span>
+        <span class="why">句子通常較貼近 chat template；tag 串也可行，內容比格式重要。</span>
       </div>
       <div class="card">
         <h4>④ 負向分支跳過 block 22</h4>
@@ -238,27 +239,29 @@
     <h3><span class="num">2</span>資料集怎麼挑</h3>
     <p class="sub">張數是上限，多樣性才是變數。</p>
 
-    <h4 style="margin:18px 0 4px;font-size:1rem">張數：30–60 張，目標 40</h4>
+    <h4 style="margin:18px 0 4px;font-size:1rem">張數：25–40 張起跑；低於 15 張不要開始</h4>
     <p style="margin:0 0 10px;font-size:.93rem;color:var(--muted)">
-      可查證的人物案例是 56 張（1200 步、單卡約 65 分鐘）、62 張、53 張。
-      工具方另有「25 張有變化勝過 60 張近重複」的說法——兩者不衝突：
-      <b>重複的構圖與背景會被併進「這個人」的概念裡</b>，所以上限是張數，變數是多樣性。
+      可查的人物案例是 56 張（1200 步、單卡約 65 分鐘）、工具商自述的 62 張與 53 張。
+      注意 56 張那個案例被不同報告重複引用，不能當成多個獨立證據。
+      <b>25–40 是低信心的營運區間，不是實驗最佳值</b>；重複的構圖與背景會被併進「這個人」的概念裡，
+      所以張數是上限，多樣性才是變數。
     </p>
 
-    <h4 style="margin:22px 0 4px;font-size:1rem">取景比例：半身 50 / 全身 30 / 特寫 20</h4>
+    <h4 style="margin:22px 0 4px;font-size:1rem">取景比例：用覆蓋率檢查，不要照抄單一個案</h4>
     <p style="margin:0 0 10px;font-size:.93rem;color:var(--muted)">
       這是唯一有公開逐張統計的人物案例。要注意的是它<b>仍然有缺口</b>——作者自評「朝左的角度太少，側臉只有 4 張」。
       同一作者前一次用「以頭肩照為主」的資料集，結果<b>訓練久了會把全身 prompt 拉回大頭照</b>。
+      下表是覆蓋率檢查，不是實驗出來的最佳比例。
     </p>
 
     <div class="table-scroll">
       <table>
         <thead><tr><th>維度</th><th>建議</th><th>為什麼</th></tr></thead>
         <tbody>
-          <tr><td>取景</td><td>半身 50%、全身 30%、特寫 20%</td><td>缺全身，構圖會被鎖在胸部以上</td></tr>
-          <tr><td>角度</td><td>正面為主，<b>側臉至少 8–10 張</b></td><td>最常見的缺口，補齊後側臉 prompt 才聽話</td></tr>
-          <tr><td>服裝</td><td>4–6 套，平均分配</td><td>單一服裝佔比過高會有外洩風險</td></tr>
-          <tr><td>光源</td><td>室內外、順光逆光都要有</td><td>膚色被拉平通常是光源樣本太單一</td></tr>
+          <tr><td>取景</td><td>特寫 20–25%、半身 35–40%、全身 30%、背面 ≤10%</td><td>缺全身，構圖會被鎖在胸部以上</td></tr>
+          <tr><td>角度</td><td>正面約 40%，左右 3/4 各約 20%，左右側面各 10–15%（至少各 3 張）</td><td>最常見的缺口，補齊後側臉 prompt 才聽話</td></tr>
+          <tr><td>服裝</td><td>至少 4 套，單套 ≤50%</td><td>同一件衣服會被併進「這個人」</td></tr>
+          <tr><td>光源</td><td>至少 4 種（室內暖光、窗光、戶外陰天、直射日光）</td><td>膚色被拉平通常是光源樣本太單一</td></tr>
           <tr><td>背景</td><td>至少 5 種不同場景</td><td>同一面牆會變成「這個人」的一部分</td></tr>
         </tbody>
       </table>
@@ -281,12 +284,13 @@
 
   <section id="s3">
     <h3><span class="num">3</span>Caption 怎麼寫</h3>
-    <p class="sub">格式沒有共識，但「內容」有——這是官方與社群唯一完全一致的地方。</p>
+    <p class="sub">格式沒有共識；「不要寫死外觀」是社群慣例，不是官方證實。</p>
 
     <div class="callout ok">
-      <b>唯一鐵律</b>
-      <b>不要描述觸發詞已經代表的外觀。</b>髮色、瞳色、臉型、身材、年齡，全部不要寫。
-      你要讓 LoRA 從圖片學這些，寫進 caption 等於用文字硬拉，會削弱學習效果。
+      <b>社群慣例（非官方證實）</b>
+      <b>不要描述觸發詞已經代表的外觀。</b>髮色、瞳色、臉型、身材、年齡，通常不要寫。
+      這是多個人物 LoRA 實作者收斂出的做法；官方 recaption 是通用標註指引，不是人物 LoRA 配方。
+      你要讓 LoRA 從圖片學這些，寫進 caption 等於用文字硬拉，會削弱「觸發詞→身分」的綁定。
     </div>
 
     <div class="table-scroll">
@@ -302,11 +306,11 @@
       </table>
     </div>
 
-    <h4 style="margin:22px 0 4px;font-size:1rem">格式：用句子，不要用 tag 串</h4>
+    <h4 style="margin:22px 0 4px;font-size:1rem">格式：句子或 tag 串都可，內容才是關鍵</h4>
     <p style="margin:0 0 8px;font-size:.93rem;color:var(--muted)">
       MOSS 的官方文件同時接受自然語言、tag 串與 JSON layout，社群也確實有人用 tag 串成功。
-      但它的文字編碼器是走對話模板的 Qwen3.5-9B，<b>句子更貼近它訓練時看到的東西</b>。
-      tag 串不是錯，只是沒有理由優先選它。
+      它的文字編碼器是走對話模板的 Qwen3.5-9B，句子通常較貼近它訓練時看到的東西；
+      但 tag 串不是錯，兩派都有成品——<b>不要只調格式，先確認內容有沒有寫對</b>。
     </p>
 
     <div class="codewrap">
@@ -316,7 +320,7 @@
 
     <ul class="clean">
       <li><b>觸發詞放句首</b>，而且每張都要有。ai-toolkit 找不到時會自動補到最前面，但自己寫清楚比較不會出意外。</li>
-      <li>長度抓 <b>40–90 個英文詞</b>就夠。官方預訓練語料的中位數大約 75 token，人物 caption 不需要長篇。</li>
+      <li>長度抓 <b>25–60 個英文詞</b>（約 35–80 tokens）就夠。官方預訓練語料的中位數大約 75 token，人物 caption 不需要長篇。</li>
       <li>用<b>英文</b>寫。模型看過的英文資料量最大。</li>
       <li>一張圖一個場景描述，不要把所有可能都寫進去。</li>
     </ul>
@@ -327,11 +331,12 @@
     <p class="sub">下面這份可以直接貼進 ai-toolkit 的 job 設定，改成你的路徑與觸發詞即可。</p>
 
     <div class="callout warn">
-      <b>UI 預設有三個陷阱，開工前先改掉</b>
+      <b>UI 預設有四個陷阱，開工前先改掉</b>
       <ul style="margin:6px 0 0;padding-left:1.2em">
         <li><code>resolution: [512, 768, 1024]</code> — 清單會<b>拆成三份資料集</b>，同一批圖跑三種解析度，步數預算等於 ×3。</li>
         <li><code>caption_dropout_rate: 0.05</code> — 通用防過擬合值；人物小資料集建議改 <code>0</code>。</li>
         <li>預設底模是 <b>SFT</b>，要自己切到「MOSS-Image Base」。</li>
+        <li>存檔預設只保留 <b>4</b> 個 checkpoint；人物建議 <b>6–8</b>。</li>
       </ul>
     </div>
 
@@ -356,20 +361,20 @@
       <span class="key">save</span>:
         <span class="key">dtype</span>: bf16
         <span class="key">save_every</span>: 250
-        <span class="key">max_step_saves_to_keep</span>: 6      <span class="cmt"># 預設 4；人物常要回頭撿早期 checkpoint</span>
+        <span class="key">max_step_saves_to_keep</span>: 6      <span class="cmt"># UI 預設 4；人物建議 6–8</span>
 
       <span class="key">datasets</span>:
         - <span class="key">folder_path</span>: /workspace/dataset
           <span class="key">caption_ext</span>: txt
           <span class="key">caption_dropout_rate</span>: 0.0    <span class="cmt"># 人物小資料集建議 0</span>
           <span class="key">buckets</span>: true
-          <span class="key">resolution</span>: [1024]             <span class="cmt"># 16GB 改 [768]；不要留 [512,768,1024]</span>
+          <span class="key">square_crop</span>: false            <span class="cmt"># 不要開；會跳過分桶、可能放大</span>
+          <span class="key">resolution</span>: [1024]             <span class="cmt"># 16GB 也實測可跑；不要留 [512,768,1024]</span>
           <span class="key">cache_latents_to_disk</span>: true
-          <span class="key">cache_text_embeddings</span>: true  <span class="cmt"># 關鍵：讓 9.75GB 的文字編碼器不必常駐</span>
 
       <span class="key">train</span>:
         <span class="key">batch_size</span>: 1
-        <span class="key">steps</span>: 2500                    <span class="cmt"># 20–30 張人物：2000–3000</span>
+        <span class="key">steps</span>: 2500                    <span class="cmt"># 25–40 張人物：2000–3000</span>
         <span class="key">gradient_accumulation</span>: 1
         <span class="key">train_unet</span>: true
         <span class="key">train_text_encoder</span>: false      <span class="cmt"># 架構內已硬凍結</span>
@@ -380,6 +385,8 @@
         <span class="key">lr</span>: 0.0001
         <span class="key">lr_scheduler</span>: constant
         <span class="key">dtype</span>: bf16
+        <span class="key">cache_text_embeddings</span>: false <span class="cmt"># 預設 false；OOM 再試 true 並確認 loss</span>
+        <span class="key">unload_text_encoder</span>: false   <span class="cmt"># 單開 true 會毀掉 caption 訓練</span>
 
       <span class="key">model</span>:
         <span class="key">name_or_path</span>: OpenMOSS-Team/MOSS-Image-Base
@@ -389,14 +396,14 @@
         <span class="key">quantize_te</span>: true
         <span class="key">qtype_te</span>: convrot8
         <span class="key">low_vram</span>: true
-        <span class="key">layer_offloading</span>: false        <span class="cmt"># 16GB 改成 true</span>
+        <span class="key">layer_offloading</span>: false        <span class="cmt"># 16GB 實測可關；OOM 再開</span>
         <span class="key">model_kwargs</span>:
           <span class="key">uncond_skip_layers</span>: [22]      <span class="cmt"># 官方 SLG</span>
 
       <span class="key">sample</span>:
         <span class="key">sampler</span>: flowmatch
         <span class="key">sample_every</span>: 250
-        <span class="key">width</span>: 1024                    <span class="cmt"># 16GB 可降 768</span>
+        <span class="key">width</span>: 1024                    <span class="cmt"># 16GB 實測 1024 訓練可行；取樣 OOM 再降</span>
         <span class="key">height</span>: 1024
         <span class="key">guidance_scale</span>: 3.0            <span class="cmt"># 不是 1.0</span>
         <span class="key">sample_steps</span>: 30               <span class="cmt"># 驗收時改 50</span>
@@ -407,6 +414,7 @@
     <p style="font-size:.88rem;color:var(--muted);margin-top:10px">
       注意：真正決定 Base 還是 SFT 的是 <code>name_or_path</code>，不是 <code>arch</code> 的標籤。
       <code>arch</code> 只用來挑 UI 預設，載入時標籤會被切掉。
+      另外 <code>sample.sampler</code> 寫了不生效，MOSS 管線實際用 Euler；真正要調的是 steps、CFG、shift。
     </p>
   </section>
 
@@ -421,26 +429,33 @@
           <tr>
             <td><b>24GB</b><br><small>3090 / 4090</small></td>
             <td>兩個 <code>convrot8</code>、解析度 1024、<code>layer_offloading: false</code></td>
-            <td>可行。不量化也能跑，但要 <code>cache_text_embeddings: true</code> 把 19GB 的編碼器移出 GPU</td>
+            <td>可行。不量化也能跑；要省 VRAM 再試 <code>cache_text_embeddings</code>（未驗證）</td>
           </tr>
           <tr>
             <td><b>16GB</b><br><small>4080 / 5070 Ti / 5080</small></td>
-            <td>兩個 <code>convrot8</code>、<code>low_vram: true</code>、<code>layer_offloading: true</code>、解析度 <b>768</b></td>
-            <td>這條路線的實務下限</td>
+            <td>兩個 <code>convrot8</code>、<code>low_vram: true</code>、<code>layer_offloading: false</code>、解析度 <b>1024</b></td>
+            <td><b>本專案實測可行</b>：峰值約 11GB、2.4 秒/步（單次數據）</td>
           </tr>
           <tr>
             <td><b>12GB</b><br><small>3060 / 4070</small></td>
             <td>不建議</td>
-            <td>大概率 OOM；其他訓練器能用是靠 block swap，ai-toolkit 沒有這個機制</td>
+            <td>沒有 ai-toolkit 實測；其他訓練器能用是靠 block swap，ai-toolkit 沒有這個機制</td>
           </tr>
         </tbody>
       </table>
     </div>
 
+    <div class="callout ok">
+      <b>本專案單次實測（非官方數據）</b>
+      RTX 5070 Ti 16GB、1024 桶、offload 關、gradient checkpointing 開：約 <b>2.4 秒/步</b>、峰值約 <b>11GB</b>。
+      3000 步純 1024 約 <b>125 分鐘</b>；<code>[512,768,1024]</code> 混合 3000 步約 <b>82 分鐘</b>（等於三份資料集輪流）。
+      768 桶約 1.4 秒/步；512 桶約 1.0 秒/步。原始 log 未留存，<code>low_vram</code> 未在紀錄中註明（YAML 沿用 UI 預設 true），數字是量級參考，不是保證。
+    </div>
+
     <div class="callout">
-      <b>省 VRAM 的優先順序</b>
-      <code>cache_text_embeddings</code>（把 9.75GB 編碼器移出）→ 降 dataset 解析度 → 降預覽寬高 →
-      最後才開 <code>layer_offloading</code>（每層往返 CPU，速度掉最多）。
+      <b>OOM 時先分階段，不要亂開開關</b>
+      載入 OOM → 確認量化與 <code>low_vram</code>；訓練 OOM → 降 dataset 解析度或開 <code>layer_offloading</code>；
+      取樣 OOM → 降 <code>sample.width/height</code>。<code>cache_text_embeddings</code> 是最後才試的未驗證選項（預設 <code>false</code>）。
       <br><br>
       另外：<code>low_vram</code> 和 <code>layer_offloading</code> 是<b>兩個獨立開關</b>。
       前者是把模型載到 CPU，不是「自動分批」。
@@ -465,6 +480,18 @@
       </table>
     </div>
 
+    <div class="callout">
+      <b>時間估算（16GB 單次實測，非官方數據）</b>
+      1024 桶 2.4 秒/步：2500 步約 100 分鐘、3000 步約 125 分鐘。768 桶 1.4 秒/步、512 桶 1.0 秒/步。
+      以上不含模型下載、快取、預覽與存檔。
+    </div>
+
+    <div class="callout warn">
+      <b>LoRA 強度指標（本專案觀察）</b>
+      3000 步版本 <code>|B|</code> = 2.52；1200 步版本 <code>|B|</code> = 1.56。
+      步數不足時 adapter 增量明顯較小，要追上得續訓。只有兩個資料點，只適合同一份設定的相對比較。
+    </div>
+
     <div class="callout warn">
       <b>最容易誤判的一件事</b>
       預覽預設只跑 <b>30 步</b>，官方推論建議 <b>≥50 步</b>。
@@ -481,6 +508,27 @@
       <li><b>套 LoRA、不寫觸發詞</b> — 檢查有沒有概念外洩。</li>
       <li><b>套 LoRA、寫觸發詞</b> — 這才是你實際會用的情境。</li>
     </ol>
+
+    <div class="codewrap">
+      <button class="copy-btn" data-copy="#verify-prompts">複製</button>
+      <pre id="verify-prompts"># 1 基本盤（與訓練集相似）
+mychar, close-up portrait, front view, neutral expression, plain grey background
+
+# 2 泛化（訓練集沒有的視角）
+mychar, low-angle shot looking up, sitting on a staircase, harsh midday sun
+
+# 3 換裝（caption 有標的屬性）
+mychar, full body, wearing a red knit sweater and jeans, city street at dusk
+
+# 4 側臉（訓練集的弱項）
+mychar, side profile facing left, window light
+
+# 5 外洩（不寫觸發詞）
+a young woman standing in a greenhouse, fashion portrait, soft light
+
+# 6 污染（完全無關）
+a horse galloping across a field at sunset</pre>
+    </div>
 
     <div class="table-scroll">
       <table>
@@ -509,7 +557,7 @@
       <p>載入、訓練、取樣三個階段的峰值不同，要分開處理：</p>
       <ul>
         <li><b>載入時</b> → 開量化 + <code>low_vram</code></li>
-        <li><b>訓練時</b> → 降 dataset 解析度（1024 → 768）</li>
+        <li><b>訓練時</b> → 降 dataset 解析度（僅在 OOM 時；例如 1024 → 768）</li>
         <li><b>取樣時</b> → 降 <code>sample.width/height</code>，不必動 dataset</li>
       </ul>
     </details>
@@ -540,6 +588,35 @@
       <summary>為什麼我的圖有淡淡的垂直條紋？</summary>
       <p>那是 SFT 模型本身的特性，不是你的訓練造成的。可以在推論端疊 DeBand LoRA，或直接用 Base。</p>
     </details>
+
+    <details>
+      <summary>16GB 真的能跑 1024 嗎？</summary>
+      <p>本專案在 RTX 5070 Ti 16GB 上實測可以：1024 桶、offload 關、gradient checkpointing 開，約 2.4 秒/步、峰值約 11GB。
+      這是<b>單次實測，非官方數據</b>，不是所有 16GB 卡的保證。若 OOM，先確認量化與 <code>low_vram</code>，
+      再降 dataset 解析度或開 <code>layer_offloading</code>；取樣 OOM 則先降 <code>sample.width/height</code>。</p>
+    </details>
+
+    <details>
+      <summary>checkpoint 只留 4 個嗎？</summary>
+      <p>ai-toolkit 的 UI 新 job 預設是 <b>4</b>；手寫 YAML 完全不填時，核心 <code>SaveConfig</code> 預設是 <b>5</b>。
+      人物訓練建議調高到 <b>6–8</b>，因為最好的 checkpoint 不一定是最後一顆。留 6 顆等於只保留最後 6 顆（2500 步時是 1250–2500），
+      更早的會被覆蓋；要回頭撿早期就設 8，或手動把想要的複製到別處。</p>
+    </details>
+
+    <details>
+      <summary>為什麼 YAML 的 cache_text_embeddings 是 false？</summary>
+      <p>ai-toolkit 的預設就是 <code>false</code>；MOSS 是否完整支援這條快取路徑、開啟後 loss 是否正常，本專案<b>沒有驗證</b>。
+      只有在實際 OOM、且你願意檢查 loss 與輸出時才試 <code>true</code>。不要為了省 VRAM 先動一個沒驗過的東西。</p>
+    </details>
+
+    <details>
+      <summary>訓完的 LoRA 怎麼合併成單檔？4 步預覽怎麼做？</summary>
+      <p>本專案有兩支工具：<code>scripts/merge_moss_lora.py</code> 把人物 LoRA 併進 bf16 transformer，
+      公式是 <code>W += cat(B_q, B_k, B_v) @ A</code>，fp32 計算、bf16 寫回；已實測載入合併檔角色一致。
+      4 步預覽則用 <code>scripts/patch_moss_inference_lora.py</code> 加上 forward hook，設定
+      <code>sample_steps: 4</code>、<code>guidance_scale: 1.0</code>。這是看最終推論設定的樣子，不是訓練中的 checkpoint 比較；
+      訓練中的預覽仍用 base 模型 30 步，驗收用 50 步 CFG 3。</p>
+    </details>
   </section>
 
   <section id="s9">
@@ -547,24 +624,26 @@
     <p class="sub">勾完再按開始，可以省掉一輪重訓。</p>
 
     <ul class="checklist">
-      <li><input type="checkbox" id="c1"><label for="c1">資料 30–60 張，且<b>沒有近重複</b><span class="hint">同一張換濾鏡、連拍同姿勢都算重複</span></label></li>
-      <li><input type="checkbox" id="c2"><label for="c2">全身照至少佔 30%，側臉至少 8 張<span class="hint">最常見的兩個缺口</span></label></li>
+      <li><input type="checkbox" id="c1"><label for="c1">資料 25–40 張，且<b>沒有近重複</b><span class="hint">低於 15 張先不要開始；同一張換濾鏡、連拍同姿勢都算重複</span></label></li>
+      <li><input type="checkbox" id="c2"><label for="c2">特寫、半身、全身、背面都有；左右側臉各至少 3 張<span class="hint">最常見的兩個缺口</span></label></li>
       <li><input type="checkbox" id="c3"><label for="c3">原圖長邊都 ≥1024 px<span class="hint">太小的圖只能餵小 bucket，細節會被抹掉</span></label></li>
       <li><input type="checkbox" id="c4"><label for="c4">每張圖都有同名 <code>.txt</code>，且<b>沒描述長相</b><span class="hint">髮色、瞳色、臉型、身材都不寫</span></label></li>
       <li><input type="checkbox" id="c5"><label for="c5">觸發詞是不常見的 token，且每張 caption 都有<span class="hint">常見名字會和模型既有概念打架</span></label></li>
       <li><input type="checkbox" id="c6"><label for="c6">底模選 <b>Base</b>，不是 SFT<span class="hint">ai-toolkit 預設是 SFT，要自己切</span></label></li>
-      <li><input type="checkbox" id="c7"><label for="c7"><code>resolution</code> 只留一個值<span class="hint">留三個等於三份資料集，步數預算 ×3</span></label></li>
-      <li><input type="checkbox" id="c8"><label for="c8"><code>caption_dropout_rate</code> 設 0<span class="hint">人物小資料集不需要 dropout</span></label></li>
-      <li><input type="checkbox" id="c9"><label for="c9"><code>caption_dropout_rate</code>、<code>square_crop</code>、<code>uncond_skip_layers</code> 都確認過<span class="hint">false / false / [22]</span></label></li>
+      <li><input type="checkbox" id="c7"><label for="c7"><code>resolution</code> 只留 <code>[1024]</code><span class="hint">16GB 也實測可跑；留三個等於三份資料集，步數預算 ×3</span></label></li>
+      <li><input type="checkbox" id="c8"><label for="c8"><code>caption_dropout_rate</code> 設 0<span class="hint">另做一組 0.05 對照，其餘條件不變</span></label></li>
+      <li><input type="checkbox" id="c9"><label for="c9"><code>caption_dropout_rate</code>、<code>square_crop</code>、<code>uncond_skip_layers</code>、<code>ignore_if_contains</code> 都確認過<span class="hint">0.0 / false / [22] / ["layers.22."]</span></label></li>
       <li><input type="checkbox" id="c10"><label for="c10">預覽 CFG 是 <b>3.0</b>，不是 1.0<span class="hint">從別的模型複製設定時最容易錯的一格</span></label></li>
-      <li><input type="checkbox" id="c11"><label for="c11">存檔間隔 250、保留 6 個<span class="hint">人物常常要回頭撿早期 checkpoint</span></label></li>
+      <li><input type="checkbox" id="c11"><label for="c11">存檔間隔 250、保留 6–8 個<span class="hint">UI 預設 4；人物常常要回頭撿早期 checkpoint</span></label></li>
       <li><input type="checkbox" id="c12"><label for="c12">準備好三路驗收的 prompt 與 seed<span class="hint">原模型 / 無觸發詞 / 有觸發詞</span></label></li>
+      <li><input type="checkbox" id="c13"><label for="c13"><code>cache_text_embeddings</code> 保持 <code>false</code><span class="hint">要開先確認 loss 正常；這是未驗證選項</span></label></li>
+      <li><input type="checkbox" id="c14"><label for="c14"><code>arch</code> 與 <code>name_or_path</code> 都正確<span class="hint">arch: moss_image；name_or_path 指向 MOSS-Image-Base</span></label></li>
     </ul>
   </section>
 
   <section id="s10">
     <h3><span class="num">10</span>資料來源</h3>
-    <p class="sub">2026-10-28 查詢。標記方式：官方文件與原始碼優先，其次為可重現的社群實測，最後才是推論。</p>
+    <p class="sub">2026-10-29 查詢。標記方式：官方文件與原始碼優先，其次為可重現的社群實測，最後才是推論。</p>
 
     <details>
       <summary>官方（OpenMOSS）</summary>
@@ -596,11 +675,18 @@
       </ul>
     </details>
 
+    <details open>
+      <summary>本專案單次實測（非官方數據）</summary>
+      <p>RTX 5070 Ti 16GB：1024 桶約 <b>2.4 秒/步</b>、峰值約 <b>11GB</b>；3000 步純 1024 約 <b>125 分鐘</b>；
+      <code>[512,768,1024]</code> 混合 3000 步約 <b>82 分鐘</b>；768 桶約 1.4 秒/步、512 桶約 1.0 秒/步。
+      原始 log 未留存，數字是量級參考，不是官方數據或保證。</p>
+    </details>
+
     <div class="callout warn" style="margin-top:20px">
       <b>這份指南的已知缺口</b>
       真人（非名人）的 MOSS 人物 LoRA 公開實測<b>查不到</b>，現有案例都是虛構角色與廠商內部測試。
-      量化對相似度的影響、12GB 能否跑完 1024²、block 22 該不該訓，也都還沒有公開 A/B 對照。
-      這些地方請把它當「合理起點」，不是「最佳解」。
+      量化對相似度的影響、12GB 能否跑完 1024²、block 22 該不該訓、<code>cache_text_embeddings</code> 是否正常，
+      也都還沒有公開 A/B 對照。這些地方請把它當「合理起點」，不是「最佳解」。
     </div>
   </section>
 
@@ -609,7 +695,7 @@
 
 <footer>
   <div class="wrap">
-    <p><b>MOSS-Image 人物 LoRA 訓練指南</b>　·　建立 2026-10-28</p>
+    <p><b>MOSS-Image 人物 LoRA 訓練指南</b>　·　建立 2026-10-28，更新 2026-10-29</p>
     <p>依 ai-toolkit 0.13.39（<code>b69b983</code>）與 OpenMOSS MOSS-Image（2026-10-16 釋出）整理。模型與工具迭代快，動手前請重新確認版本。</p>
     <p>訓練真人影像需要當事人同意；模型授權（Apache-2.0）不涵蓋肖像權與個資。</p>
   </div>
