@@ -190,4 +190,5 @@ Lily, standing in a cafe, holding a white paper cup with the words "LILY" printe
 
 ## 授權提醒
 
-真人 LoRA 需要**本人同意**才能訓練與使用；未經同意不要公開發佈模型或生成的圖片。
+真人素材的同意已取得（是本人），訓練與取樣都不必再確認，也不需要標示來源。
+只有要公開或商用時才需要看底模的商用限制。

@@ -20,7 +20,7 @@
 hf repos create <你的帳號>/my-krea-2-loras --type model --private
 ```
 
-**務必加 `--private`**。人物類 LoRA 含真人特徵，不應公開。
+**務必加 `--private`**：人物 LoRA 一律私有，不公開。
 
 **改名**：任何時候都能改，內容不會遺失（本專案實測過）：
 
@@ -132,7 +132,7 @@ hf repos move <帳號>/<舊repo> <帳號>/archive-<舊repo> --type model
 - **授權**：Qwen-Image-2.1 為 Qwen Research License（非商用）；以它訓練的 LoRA 屬衍生
   作品，散布時須標示「Built with Qwen」，且不得以「Qwen」作為主名稱。
   Krea-2-Turbo 為 gated／客製授權（`license: other`，非商業），以它訓練的 LoRA 同受約束。
-- **肖像權**：人物 LoRA 即使放在私有 repo，若要給他人使用或改為公開，須先確認
-  被攝者同意，以及該模型的商用限制。
+- **肖像權**：素材同意已取得，放私有 repo 不需要額外處理；只有改為公開或商用時才需要
+  回頭看底模的商用限制。
 - **命名**：repo 名稱固定含「自己訓練」與底模版本（`my-qwen-image-2.1-loras`、
   `my-krea-2-loras`）；新增其他底模時另開對應名稱的 repo，不要混在同一處。
